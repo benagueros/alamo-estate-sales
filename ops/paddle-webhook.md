@@ -48,6 +48,10 @@ grounds as Stripe.
 
 ## worker.js
 
+Standalone copy lives at `ops/worker.js` in this repo — open it on GitHub
+and copy the whole file (or fetch the raw URL). The annotated version with
+explanations is below.
+
 ```javascript
 // alamo-paddle-webhook — Cloudflare Worker.
 // Paddle subscription events -> Buttondown subscribers.
