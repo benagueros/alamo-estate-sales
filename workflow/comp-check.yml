@@ -1,0 +1,52 @@
+# Comp check — Alamo Estate Deals
+#
+# Manual dispatch: Actions -> "Comp check" -> Run workflow.
+# Ben adds this file via the GitHub web UI (the GitHub integration cannot
+# push .github/workflows/** files).
+#
+# Required repo secret: TRAWL_API_KEY (the trawl.dev key).
+# Repo files: comps.py, finds.json (one entry per newsletter find).
+
+name: Comp check
+
+on:
+  workflow_dispatch:
+    inputs:
+      finds_file:
+        description: "Finds file in the repo (default finds.json)"
+        required: false
+        default: "finds.json"
+      verify:
+        description: "Run sold-state verification (/item per comp, ~1 credit each, max 10)"
+        required: false
+        default: "false"
+
+jobs:
+  comps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch sold comps
+        env:
+          TRAWL_API_KEY: ${{ secrets.TRAWL_API_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.verify }}" = "true" ]; then ARGS="--verify"; fi
+          python3 comps.py "${{ inputs.finds_file }}" $ARGS --out out
+
+      - name: Upload brief
+        uses: actions/upload-artifact@v4
+        with:
+          name: comp-brief
+          path: |
+            out/comp-brief.json
+            out/comp-brief.md
+
+      - name: Brief summary
+        run: cat out/comp-brief.md >> "$GITHUB_STEP_SUMMARY"
