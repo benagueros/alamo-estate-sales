@@ -4,9 +4,7 @@ All the code is written. These are your moves, in order. Nothing here
 spends money except the $5 test subscription at the end (refundable).
 
 ## 1. GitHub repo
-- [ ] Create repo **`benagueros/alamo-estate-deals`** (private is fine) — web UI.
-- [ ] Tell Muse it's created → he pushes all the code via the GitHub
-      integration (same flow as TripSplit).
+- [x] Repo **`benagueros/alamo-estate-sales`** created; pipeline code pushed.
 - [ ] Add the three workflow files **via the web UI** (the integration can't
       push `.github/workflows/**` — same limitation as TripSplit):
       copy `workflow/build-issue.yml` → `.github/workflows/build-issue.yml`,
@@ -22,12 +20,14 @@ spends money except the $5 test subscription at the end (refundable).
 - [ ] Create account + newsletter at buttondown.com (free tier covers the start).
 - [ ] API key: Settings → API → copy into the repo secret above.
 
-## 4. Polar ($5/mo billing)
-- [ ] Create product **"Alamo Estate Deals"**, $5/month recurring.
-- [ ] Follow `ops/polar-webhook.md`: add the webhook endpoint, deploy the
-      `alamo-polar-webhook` edge function (copy-paste into the Supabase
-      dashboard, same as TripSplit's functions), set its two secrets.
-- [ ] Point your subscribe button/page at the Polar checkout link.
+## 4. Paddle ($5/mo billing — Polar rejected this use case, Stripe is out)
+- [ ] Sign up at paddle.com; create product **"Alamo Estate Deals"**,
+      $5/month recurring. (Cost: 5% + $0.50 per payment = $0.75 on $5.)
+- [ ] Follow `ops/paddle-webhook.md`: add the notification destination,
+      deploy the `alamo-paddle-webhook` edge function (copy-paste into the
+      Supabase dashboard, same as TripSplit's functions), set its three
+      secrets.
+- [ ] Point your subscribe button/page at the Paddle checkout link.
 
 ## 5. First run (proves everything)
 - [ ] Actions → **"Build daily issue"** → Run workflow. It scrapes SA
@@ -39,7 +39,7 @@ spends money except the $5 test subscription at the end (refundable).
       It creates a **draft** in Buttondown — review it there, then hit send
       yourself. Nothing ever goes out unreviewed.
 - [ ] Money loop: buy the $5 sub yourself → confirm you land on the
-      Buttondown list → cancel/refund in Polar → confirm you're unsubscribed.
+      Buttondown list → cancel in Paddle → confirm you're unsubscribed.
 
 ## 6. Leave running
 - The build workflow runs daily ~6am CDT on its own. Each morning: read the
