@@ -40,9 +40,8 @@ proves the `TRAWL_API_KEY` secret end to end.
 ## Billing
 
 Paddle $5/mo product (Polar rejected this use case; Stripe is off the
-table); `ops/paddle-webhook.md` has the edge function that subscribes
-buyers to Buttondown automatically (mirrors TripSplit's polar-webhook;
-same Supabase project, new function).
+table); `ops/paddle-webhook.md` has the Cloudflare Worker that subscribes
+buyers to Buttondown automatically.
 
 ## Setup
 

@@ -23,10 +23,9 @@ spends money except the $5 test subscription at the end (refundable).
 ## 4. Paddle ($5/mo billing — Polar rejected this use case, Stripe is out)
 - [ ] Sign up at paddle.com; create product **"Alamo Estate Deals"**,
       $5/month recurring. (Cost: 5% + $0.50 per payment = $0.75 on $5.)
-- [ ] Follow `ops/paddle-webhook.md`: add the notification destination,
-      deploy the `alamo-paddle-webhook` edge function (copy-paste into the
-      Supabase dashboard, same as TripSplit's functions), set its three
-      secrets.
+- [ ] Follow `ops/paddle-webhook.md`: create the `alamo-paddle-webhook`
+      Cloudflare Worker (paste `worker.js`, add the 4 variables), then add
+      the notification destination in Paddle using the worker's URL.
 - [ ] Point your subscribe button/page at the Paddle checkout link.
 
 ## 5. First run (proves everything)
