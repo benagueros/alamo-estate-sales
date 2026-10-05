@@ -1,26 +1,27 @@
-# Send issue — Alamo Estate Deals
+# Build daily issue — Alamo Estate Deals
 #
-# Manual dispatch only. Takes a draft built by "Build daily issue" and
-# publishes it to Buttondown as a DRAFT email. Ben reviews it in the
-# Buttondown dashboard and hits send himself — the human gate stays in
-# front of every issue.
+# Runs every morning: scrape SA listings -> identify candidates ->
+# trawl.dev sold comps -> assemble the draft issue -> commit it.
+# Nothing sends automatically. Ben reviews the draft, then runs the
+# "Send issue" workflow (manual dispatch) which publishes it to Buttondown
+# as a draft for final review + send.
 #
 # Ben adds this file via the GitHub web UI (the GitHub integration cannot
 # push .github/workflows/** files).
 #
-# Required repo secret: BUTTONDOWN_API_KEY.
+# Required repo secrets: TRAWL_API_KEY.
+# Repo files: pipeline/*.py, comps.py (trawl's API is not reliably reachable
+# from the Hatch VM, so comps run here on Actions, not on the VM).
 
-name: Send issue
+name: Build daily issue
 
 on:
+  schedule:
+    - cron: "0 11 * * *"   # ~6:00am CDT
   workflow_dispatch:
-    inputs:
-      draft:
-        description: "Draft file (e.g. drafts/2026-10-05.html)"
-        required: true
 
 jobs:
-  send:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +31,64 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Publish draft to Buttondown
+      - name: Install deps
+        # Playwright: the site is Angular/client-rendered (plain HTTP gets
+        # only the app shell), so the scraper drives headless Chromium.
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Scrape SA listings
+        run: python3 pipeline/scrape.py --out sales.json
+
+      - name: Identify candidates
+        run: python3 pipeline/identify.py sales.json --out finds.json --max-finds 4
+
+      - name: Check trawl credit budget
+        id: budget
+        run: |
+          python3 - <<'EOF'
+          import json, datetime, os
+          month = datetime.date.today().strftime("%Y-%m")
+          try:
+              state = json.load(open("state.json"))
+          except (FileNotFoundError, json.JSONDecodeError):
+              state = {}
+          used = state.get("trawl_credits_used", 0) if state.get("trawl_month") == month else 0
+          ok = used < 200  # free tier = 250/mo; 200 guard leaves headroom
+          print(f"trawl month={month} used={used} ok={ok}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"ok={'true' if ok else 'false'}\n")
+          EOF
+
+      - name: Fetch sold comps
+        if: steps.budget.outputs.ok == 'true'
         env:
-          BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
-        run: python3 pipeline/send.py "${{ inputs.draft }}"
+          TRAWL_API_KEY: ${{ secrets.TRAWL_API_KEY }}
+        run: |
+          python3 comps.py finds.json --verify --verify-cap 4 --out out
+          python3 - <<'EOF'
+          import json, datetime
+          month = datetime.date.today().strftime("%Y-%m")
+          try:
+              state = json.load(open("state.json"))
+          except (FileNotFoundError, json.JSONDecodeError):
+              state = {}
+          if state.get("trawl_month") != month:
+              state = {"trawl_month": month, "trawl_credits_used": 0}
+          brief = json.load(open("out/comp-brief.json"))
+          state["trawl_credits_used"] += brief.get("credits_charged", 0)
+          json.dump(state, open("state.json", "w"), indent=2)
+          print(f"month credits used now: {state['trawl_credits_used']}")
+          EOF
+
+      - name: Assemble issue draft
+        run: python3 pipeline/issue.py sales.json finds.json out/comp-brief.json
+
+      - name: Commit draft
+        run: |
+          git config user.name "alamo-bot"
+          git config user.email "alamo-bot@users.noreply.github.com"
+          git add drafts state.json
+          git diff --cached --quiet || git commit -m "issue draft $(date +%F)"
+          git push
