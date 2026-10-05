@@ -1,0 +1,36 @@
+# Send issue — Alamo Estate Deals
+#
+# Manual dispatch only. Takes a draft built by "Build daily issue" and
+# publishes it to Buttondown as a DRAFT email. Ben reviews it in the
+# Buttondown dashboard and hits send himself — the human gate stays in
+# front of every issue.
+#
+# Ben adds this file via the GitHub web UI (the GitHub integration cannot
+# push .github/workflows/** files).
+#
+# Required repo secret: BUTTONDOWN_API_KEY.
+
+name: Send issue
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Draft file (e.g. drafts/2026-10-05.html)"
+        required: true
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Publish draft to Buttondown
+        env:
+          BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
+        run: python3 pipeline/send.py "${{ inputs.draft }}"
