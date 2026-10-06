@@ -67,7 +67,7 @@ def find_card(find, sale, summary):
       {f'<img src="{html.escape(photo)}" alt="{html.escape(find["query"])}">' if photo else ""}
       <p class="comps"><strong>Sold comps:</strong> {comps_line}</p>
       <p class="threshold"><strong>Deal threshold:</strong> {threshold} <span class="writer-note">(writer: adjust)</span></p>
-      <p class="note"><strong>Why it matters:</strong> Spotted in the listing — “{html.escape(find.get('evidence', ''))}” <span class="writer-note">(writer: add era/maker/value-driver note)</span></p>
+      <p class="note"><strong>Why it matters:</strong> {"Spotted in the photos" if find.get("source") == "vision" else "Spotted in the listing"} — “{html.escape(find.get('evidence', ''))}” <span class="writer-note">(writer: add era/maker/value-driver note)</span></p>
       <p class="sale">{sale_line}<br><a href="{html.escape(sale.get('url', ''))}">View sale listing →</a></p>
     </div>"""
 

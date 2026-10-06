@@ -105,6 +105,7 @@ def extract(sales, max_finds=4):
                 "evidence": find_evidence(desc, phrase),
                 "exclude": ["parts", "manual", "brochure", "model", "print",
                             "poster", "book"],
+                "source": "keyword",
             })
     candidates.sort(key=lambda c: -c["weight"])
     return candidates[:max_finds]
