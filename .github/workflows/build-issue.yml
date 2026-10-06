@@ -20,6 +20,10 @@ on:
     - cron: "0 11 * * *"   # ~6:00am CDT
   workflow_dispatch:
 
+# The "Commit draft" step pushes the issue draft back to the repo.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
