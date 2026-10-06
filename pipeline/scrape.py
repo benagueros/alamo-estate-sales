@@ -23,11 +23,22 @@ UPGRADE PATH: photo-based find discovery (vision over photo_urls) consumes
 the photo_urls this already collects; no scrape changes needed.
 """
 import json
+import re
 import sys
 import time
 
 BASE = "https://www.estatesales.net"
 LISTING = BASE + "/TX/San-Antonio/{zip}"
+
+# San Antonio metro: 782xx (city), 780xx (Boerne/Helotes/Fair Oaks),
+# 781xx (New Braunfels/Schertz/Cibolo corridor). The zip search pages leak
+# "nearby" results from Austin (787xx), DFW (761xx), etc. — not our market.
+METRO_ZIP_PREFIXES = ("782", "780", "781")
+
+
+def metro_zip(url):
+    m = re.search(r"/TX/[^/]+/(\d{5})/", url or "")
+    return m.group(1) if m else ""
 
 # Verified Oct 4, 2026 against the live DOM.
 LISTING_CARDS_JS = """() => [...document.querySelectorAll('a.sale-row')]
@@ -90,9 +101,13 @@ def main():
                 continue
             for c in cards:
                 c["title"] = c["title"].strip()[:160]
-                if c["url"] not in seen and "/TX/" in c["url"]:
+                z = metro_zip(c["url"])
+                if (c["url"] not in seen and "/TX/" in c["url"]
+                        and z.startswith(METRO_ZIP_PREFIXES)):
                     seen.add(c["url"])
                     sales.append(c)
+                elif z and not z.startswith(METRO_ZIP_PREFIXES):
+                    print(f"  out-of-area: {c['url']}", file=sys.stderr)
             print(f"zip {z}: {len(cards)} cards")
             time.sleep(1)
         sales = sales[:max_sales]
@@ -102,7 +117,10 @@ def main():
             try:
                 page.goto(s["url"], wait_until="domcontentloaded",
                           timeout=45000)
-                page.wait_for_selector("app-ck-editor-content", timeout=30000)
+                # Fail fast on description-less pages (12s, not 30s): a sale
+                # with no description gives identify.py nothing to mine, so
+                # don't burn the timeout budget on it.
+                page.wait_for_selector("app-ck-editor-content", timeout=12000)
                 time.sleep(1)  # let lazy images resolve their src
                 d = page.evaluate(DETAIL_JS)
             except Exception as exc:

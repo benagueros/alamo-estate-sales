@@ -43,7 +43,10 @@ jobs:
           playwright install --with-deps chromium
 
       - name: Scrape SA listings
-        run: python3 pipeline/scrape.py --out sales.json
+        # 11 zips across the metro (Alamo Heights, central, medical,
+        # northside, Stone Oak, Alamo Ranch...). Detail pages are capped at
+        # 25 in scrape.py; total runtime stays ~10 min on Actions.
+        run: python3 pipeline/scrape.py --out sales.json --zips 78209,78212,78216,78230,78232,78240,78247,78248,78249,78254,78258
 
       - name: Identify candidates
         run: python3 pipeline/identify.py sales.json --out finds.json --max-finds 4
