@@ -54,9 +54,10 @@ def find_card(find, sale, summary):
     else:
         comps_line = "No same-item solds in the dataset — query too narrow or no eBay market."
         threshold = "No threshold: needs a wider query or a different find."
-    sale_line = (f"{html.escape(sale.get('dates_text', ''))} · "
-                 f"{html.escape(sale.get('address', ''))} · "
-                 f"{html.escape(sale.get('company', ''))}")
+    addr = sale.get('address', '') or (
+        "Online auction" if sale.get('online') else "")
+    parts = [sale.get('dates_text', ''), addr, sale.get('company', '')]
+    sale_line = " · ".join(html.escape(p) for p in parts if p)
     if sale.get("phone"):
         sale_line += f" · {html.escape(sale['phone'])}"
     return f"""

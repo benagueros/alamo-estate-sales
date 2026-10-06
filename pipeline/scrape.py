@@ -92,6 +92,7 @@ def discover(metro_url):
                 "url": url,
                 "title": (it.get("name", "") or "").strip()[:160],
                 "zip": zip_code,
+                "online": loc.get("@type") == "VirtualLocation",
                 "city": addr.get("addressLocality", "") or "",
                 "address": re.sub(r"\s+", " ",
                                   loc.get("name", "") or "").strip(),
