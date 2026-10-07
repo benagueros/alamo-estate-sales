@@ -15,8 +15,9 @@ Auth: GEMINI_API_KEY env (free Google AI Studio key). If missing, vision is
 skipped and --merge output is just the keyword finds — the pipeline never
 breaks for lack of a key.
 Model chain: GEMINI_MODELS env (comma-separated) wins when set; otherwise
-models are discovered live from the API, flash models first, so a renamed
-or deprecated default can't 404 forever.
+models are discovered live from the API, stable flash first. A 429 tries the
+next model (quotas can be per-model); only when every usable model 429s does
+the run stop. A single 60s wait-and-retry covers per-minute blips.
 
 Output: finds.json-shaped list, each with "source": "vision". With --merge,
 keyword finds are folded in: vision outranks keyword, and for the same sale
@@ -106,14 +107,21 @@ def list_models():
 
 
 def pick_models(available):
-    """Flash models first (cheap, fast, vision-capable), newest-looking first.
-    Skips embedding/specialist models."""
+    """Stable flash models first, then preview flash, then everything else.
+    Preview builds can carry separate, tighter quotas — a 429 on one
+    shouldn't block trying a stable model. Skips embedding/TTS models."""
     cands = [m for m in available
              if "embedding" not in m.lower() and "tts" not in m.lower()]
-    flash = sorted((m for m in cands if "flash" in m.lower()),
-                   key=lambda m: m.lower(), reverse=True)
-    rest = [m for m in cands if "flash" not in m.lower()]
-    return flash + rest
+
+    def rank(m):
+        ml = m.lower()
+        is_flash = "flash" in ml
+        is_preview = "preview" in ml or "-exp" in ml
+        tier = (0 if (is_flash and not is_preview)
+                else 1 if is_flash else 2)
+        return (tier, ml)
+
+    return sorted(cands, key=rank)
 
 
 def resolve_models():
@@ -281,9 +289,11 @@ def main():
             prompt = PROMPT_TEMPLATE.format(
                 n=len(images), title=(sale.get("title") or "")[:120])
             resp, err, tried = None, None, []
-            for m in models:
-                if working and m != working:
-                    continue
+            saw_429, saw_other_error = False, False
+            # working model first, then the rest — no skip logic needed
+            ordered = ([working] if working else []) + \
+                      [m for m in models if m != working]
+            for m in ordered:
                 while True:  # inner loop so a 429 can retry the SAME model
                     try:
                         resp = call_gemini(m, prompt, images)
@@ -296,34 +306,47 @@ def main():
                             print(f"  model {m} not found, trying next",
                                   file=sys.stderr)
                             break
-                        if e.code == 429 and not waited_429:
-                            # Could be per-minute rate limiting rather than
-                            # the daily quota — wait once and retry the same
-                            # model before giving up.
-                            print("  quota hit (429): waiting 60s, "
-                                  "retrying once", file=sys.stderr)
-                            time.sleep(60)
-                            waited_429 = True
-                            continue
-                        tried.append(f"{m} (HTTP {e.code})")
-                        err = f"HTTP {e.code}: {body}"
                         if e.code == 429:
-                            quota_dead = True
+                            if not waited_429:
+                                # Could be per-minute rate limiting rather
+                                # than a dead bucket — wait once and retry
+                                # the same model before moving on.
+                                print("  quota hit (429): waiting 60s, "
+                                      "retrying once", file=sys.stderr)
+                                time.sleep(60)
+                                waited_429 = True
+                                continue
+                            tried.append(f"{m} (HTTP 429)")
+                            print(f"  model {m} quota-exhausted, trying next",
+                                  file=sys.stderr)
+                            saw_429 = True
+                            break
+                        tried.append(f"{m} (HTTP {e.code})")
+                        saw_other_error = True
+                        err = f"HTTP {e.code}: {body}"
                         break
                     except Exception as e:
                         tried.append(f"{m} (error)")
+                        saw_other_error = True
                         err = str(e)[:200]
                         break
-                if resp is not None or quota_dead:
+                if resp is not None:
                     break
+            if resp is None:
+                if saw_429 and not saw_other_error and tried:
+                    # every usable model answered 429: the project's quota
+                    # is dead — stop the run instead of hammering it
+                    quota_dead = True
+                    err = ("project quota exhausted (all models 429): " +
+                           ", ".join(tried))
+                elif err is None:
+                    err = ("no model answered; tried: " + ", ".join(tried)
+                           if tried else "no models to try")
             if quota_dead:
                 print(f"  vision stopping for this run: quota exhausted: "
                       f"{err} (keyword finds carry the issue)",
                       file=sys.stderr)
                 break
-            if resp is None and err is None:
-                err = ("no model answered; tried: " + ", ".join(tried)
-                       if tried else "no models to try")
             if resp is None:
                 print(f"  vision failed for {sale.get('id')}: {err}",
                       file=sys.stderr)
