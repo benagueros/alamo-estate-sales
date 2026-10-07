@@ -24,7 +24,10 @@ a more specific query subsumes a vaguer one ("rolex datejust 36" drops bare
 "rolex").
 
 Free-tier math: ~13 sales/day x 1 request (up to 4 photos each) = ~13
-requests/day, far under Gemini's free 1,500/day. 2s between requests.
+requests/day, far under Gemini's free 1,500/day. 8s between requests keeps
+us under the ~15 RPM per-minute ceiling even when sibling projects on the
+same GCP project (TripSplit OCR, Unspun) are active — quota pools per
+project, not per key.
 
 UPGRADE PATH: per-photo region notes (which photo shows the item) already
 flow into the evidence string; a future pass could crop to the item for a
@@ -49,7 +52,10 @@ UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
 
 MAX_PHOTOS = 4
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
-REQUEST_SLEEP = 2
+# Free tier is ~15 RPM shared across everything on the key's project
+# (TripSplit OCR, Unspun deep-dives...). 8s spacing keeps us well under
+# even when other projects are active.
+REQUEST_SLEEP = 8
 
 EXCLUDE = ["parts", "manual", "brochure", "model", "print",
            "poster", "book"]
