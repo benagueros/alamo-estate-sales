@@ -14,9 +14,9 @@ Usage:
 Auth: GEMINI_API_KEY env (free Google AI Studio key). If missing, vision is
 skipped and --merge output is just the keyword finds — the pipeline never
 breaks for lack of a key.
-Model chain: GEMINI_MODELS env, comma-separated, default
-"gemini-2.5-flash,gemini-2.0-flash". First working model wins; the choice
-sticks for the rest of the run.
+Model chain: GEMINI_MODELS env (comma-separated) wins when set; otherwise
+models are discovered live from the API, flash models first, so a renamed
+or deprecated default can't 404 forever.
 
 Output: finds.json-shaped list, each with "source": "vision". With --merge,
 keyword finds are folded in: vision outranks keyword, and for the same sale
@@ -39,9 +39,10 @@ import time
 import urllib.request
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-GEMINI_MODELS = [m.strip() for m in os.environ.get(
-    "GEMINI_MODELS", "gemini-2.5-flash,gemini-2.0-flash").split(",")
-    if m.strip()]
+# Explicit chain wins when set; otherwise models are discovered live from the
+# API (flash models first) so a renamed/deprecated default can't 404 forever.
+GEMINI_MODELS_ENV = [m.strip() for m in os.environ.get(
+    "GEMINI_MODELS", "").split(",") if m.strip()]
 
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
@@ -85,6 +86,46 @@ def download_image(url):
     except Exception as exc:
         print(f"    photo download failed: {exc}", file=sys.stderr)
         return None
+
+
+def list_models():
+    """Model names available to this key, via the API. Raises on error."""
+    req = urllib.request.Request(
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        headers={"x-goog-api-key": GEMINI_API_KEY})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        data = json.load(r)
+    return [m["name"].replace("models/", "")
+            for m in data.get("models", []) if "name" in m]
+
+
+def pick_models(available):
+    """Flash models first (cheap, fast, vision-capable), newest-looking first.
+    Skips embedding/specialist models."""
+    cands = [m for m in available
+             if "embedding" not in m.lower() and "tts" not in m.lower()]
+    flash = sorted((m for m in cands if "flash" in m.lower()),
+                   key=lambda m: m.lower(), reverse=True)
+    rest = [m for m in cands if "flash" not in m.lower()]
+    return flash + rest
+
+
+def resolve_models():
+    """Ordered model names to try: explicit GEMINI_MODELS env first, then
+    live discovery (flash first)."""
+    if GEMINI_MODELS_ENV:
+        return list(GEMINI_MODELS_ENV)
+    try:
+        models = pick_models(list_models())
+        if models:
+            print(f"  discovered models: {', '.join(models[:4])}"
+                  + ("..." if len(models) > 4 else ""))
+            return models
+    except Exception as exc:
+        print(f"  model discovery failed: {exc}", file=sys.stderr)
+    # last resort: recently valid flash names
+    return ["gemini-3.8-flash", "gemini-3-flash-preview",
+            "gemini-2.5-flash", "gemini-2.0-flash"]
 
 
 def call_gemini(model, prompt, images):
@@ -218,7 +259,8 @@ def main():
     if not GEMINI_API_KEY:
         print("vision skipped: GEMINI_API_KEY not set (keyword finds only)")
     else:
-        model, working = None, None
+        models = resolve_models()
+        working = None
         for sale in sales:
             images = []
             for u in (sale.get("photo_urls") or [])[:max_photos]:
@@ -229,8 +271,8 @@ def main():
                 continue
             prompt = PROMPT_TEMPLATE.format(
                 n=len(images), title=(sale.get("title") or "")[:120])
-            resp, err = None, None
-            for m in GEMINI_MODELS:
+            resp, err, tried = None, None, []
+            for m in models:
                 if working and m != working:
                     continue
                 try:
@@ -239,6 +281,7 @@ def main():
                     break
                 except urllib.error.HTTPError as e:
                     body = e.read().decode("utf-8", "replace")[:300]
+                    tried.append(f"{m} (HTTP {e.code})")
                     if e.code == 404:
                         print(f"  model {m} not found, trying next",
                               file=sys.stderr)
@@ -248,13 +291,15 @@ def main():
                 except Exception as e:
                     err = str(e)[:200]
                     break
+            if resp is None and err is None:
+                err = ("no model answered; tried: " + ", ".join(tried)
+                       if tried else "no models to try")
             if resp is None:
                 print(f"  vision failed for {sale.get('id')}: {err}",
                       file=sys.stderr)
                 continue
-            if working != model:
-                model = working
-                print(f"  vision model: {model}")
+            if working:
+                print(f"  vision model: {working}")
             for item in parse_items(resp):
                 vision_finds.append(to_find(item, sale))
             print(f"  {sale.get('id')}: vision found "
