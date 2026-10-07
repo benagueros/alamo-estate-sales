@@ -175,6 +175,12 @@ def main():
                 continue
             s["id"] = s["url"].rstrip("/").rsplit("/", 1)[-1]
             s["description"] = d["description"][:4000]
+            # Online auctions (e.g. LiveAuctioneers) embed their catalog URL
+            # in the page state — grab it for the "browse the lots" link.
+            # (Their lot pages sit behind Incapsula, so we link out rather
+            # than scrape estimates.)
+            m = re.search(r'"auctionUrl":"(https?://[^"]+)"', page.content())
+            s["auction_url"] = m.group(1) if m else ""
             photos = d["photos"] or ([s["thumb"]] if s.get("thumb") else [])
             s["photo_urls"] = [u for u in photos
                                if "placeholder" not in u and "logo" not in u][:12]

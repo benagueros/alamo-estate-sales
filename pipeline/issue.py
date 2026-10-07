@@ -113,6 +113,12 @@ def find_card(find, sale, summary):
         "Online auction" if sale.get('online') else "")
     parts = [sale.get('dates_text', ''), addr, sale.get('company', '')]
     sale_line = " · ".join(html.escape(p) for p in parts if p)
+    auction_line = ""
+    if sale.get("auction_url"):
+        auction_line = (
+            f'<p class="auction"><a href="{html.escape(sale["auction_url"])}">'
+            f"Browse the auction lots →</a> "
+            f'<span class="writer-note">(writer: check opening bids vs comps)</span></p>')
     if sale.get("phone"):
         sale_line += f" · {html.escape(sale['phone'])}"
     return f"""
@@ -124,6 +130,7 @@ def find_card(find, sale, summary):
       <p class="threshold"><strong>Deal threshold:</strong> {threshold} <span class="writer-note">(writer: adjust)</span></p>
       <p class="note"><strong>Why it matters:</strong> {"Spotted in the photos" if find.get("source") == "vision" else "Spotted in the listing"} — “{html.escape(find.get('evidence', ''))}” <span class="writer-note">(writer: add era/maker/value-driver note)</span></p>
       <p class="sale">{sale_line}<br><a href="{html.escape(sale.get('url', ''))}">View sale listing →</a></p>
+      {auction_line}
     </div>"""
 
 
@@ -156,6 +163,8 @@ header{{text-align:center;border-bottom:3px solid #b4552d;padding-bottom:16px;ma
 .comps,.threshold,.note{{font-size:15px;line-height:1.55}}
 .soldlinks{{font-family:system-ui,sans-serif;font-size:13px;color:#555}}
 .soldlinks a{{color:#b4552d}}
+.auction{{font-family:system-ui,sans-serif;font-size:13px;margin-top:8px}}
+.auction a{{color:#b4552d}}
 .sale{{font-family:system-ui,sans-serif;font-size:13px;color:#555;line-height:1.6}}
 .sale a{{color:#b4552d}}
 .writer-note{{color:#b4552d;font-style:italic}}
