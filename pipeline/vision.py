@@ -261,7 +261,10 @@ def main():
     else:
         models = resolve_models()
         working = None
+        quota_dead, waited_429 = False, False
         for sale in sales:
+            if quota_dead:
+                break
             images = []
             for u in (sale.get("photo_urls") or [])[:max_photos]:
                 img = download_image(u)
@@ -275,22 +278,42 @@ def main():
             for m in models:
                 if working and m != working:
                     continue
-                try:
-                    resp = call_gemini(m, prompt, images)
-                    working = m
+                while True:  # inner loop so a 429 can retry the SAME model
+                    try:
+                        resp = call_gemini(m, prompt, images)
+                        working = m
+                        break
+                    except urllib.error.HTTPError as e:
+                        body = e.read().decode("utf-8", "replace")[:300]
+                        if e.code == 404:
+                            tried.append(f"{m} (HTTP 404)")
+                            print(f"  model {m} not found, trying next",
+                                  file=sys.stderr)
+                            break
+                        if e.code == 429 and not waited_429:
+                            # Could be per-minute rate limiting rather than
+                            # the daily quota — wait once and retry the same
+                            # model before giving up.
+                            print("  quota hit (429): waiting 60s, "
+                                  "retrying once", file=sys.stderr)
+                            time.sleep(60)
+                            waited_429 = True
+                            continue
+                        tried.append(f"{m} (HTTP {e.code})")
+                        err = f"HTTP {e.code}: {body}"
+                        if e.code == 429:
+                            quota_dead = True
+                        break
+                    except Exception as e:
+                        tried.append(f"{m} (error)")
+                        err = str(e)[:200]
+                        break
+                if resp is not None or quota_dead:
                     break
-                except urllib.error.HTTPError as e:
-                    body = e.read().decode("utf-8", "replace")[:300]
-                    tried.append(f"{m} (HTTP {e.code})")
-                    if e.code == 404:
-                        print(f"  model {m} not found, trying next",
-                              file=sys.stderr)
-                        continue
-                    err = f"HTTP {e.code}: {body}"
-                    break
-                except Exception as e:
-                    err = str(e)[:200]
-                    break
+            if quota_dead:
+                print("  vision stopping for this run: quota exhausted "
+                      "(keyword finds carry the issue)", file=sys.stderr)
+                break
             if resp is None and err is None:
                 err = ("no model answered; tried: " + ", ".join(tried)
                        if tried else "no models to try")
