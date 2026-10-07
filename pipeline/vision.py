@@ -317,8 +317,9 @@ def main():
                 if resp is not None or quota_dead:
                     break
             if quota_dead:
-                print("  vision stopping for this run: quota exhausted "
-                      "(keyword finds carry the issue)", file=sys.stderr)
+                print(f"  vision stopping for this run: quota exhausted: "
+                      f"{err} (keyword finds carry the issue)",
+                      file=sys.stderr)
                 break
             if resp is None and err is None:
                 err = ("no model answered; tried: " + ", ".join(tried)
