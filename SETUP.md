@@ -5,14 +5,15 @@ spends money except the $5 test subscription at the end (refundable).
 
 ## 1. GitHub repo
 - [x] Repo **`benagueros/alamo-estate-sales`** created; pipeline code pushed.
-- [ ] Add the three workflow files **via the web UI** (the integration can't
+- [x] Add the three workflow files **via the web UI** (the integration can't
       push `.github/workflows/**` — same limitation as TripSplit):
       copy `workflow/build-issue.yml` → `.github/workflows/build-issue.yml`,
       `workflow/send-issue.yml` → `.github/workflows/send-issue.yml`,
       `workflow/comp-check.yml` → `.github/workflows/comp-check.yml`.
+      (Re-copy `build-issue.yml` after any change to `workflow/`.)
 
 ## 2. Secrets (repo Settings → Secrets and variables → Actions)
-- [ ] `TRAWL_API_KEY` — your trawl.dev key (already in your vault; paste the
+- [x] `TRAWL_API_KEY` — your trawl.dev key (already in your vault; paste the
       raw key here — GitHub encrypts it).
 - [ ] `BUTTONDOWN_API_KEY` — from step 3.
 
@@ -21,18 +22,18 @@ spends money except the $5 test subscription at the end (refundable).
 - [ ] API key: Settings → API → copy into the repo secret above.
 
 ## 4. Paddle ($5/mo billing — Polar rejected this use case, Stripe is out)
-- [ ] Sign up at paddle.com; create product **"Alamo Estate Deals"**,
+- [x] Sign up at paddle.com; create product **"Alamo Estate Deals"**,
       $5/month recurring. (Cost: 5% + $0.50 per payment = $0.75 on $5.)
 - [ ] Follow `ops/paddle-webhook.md`: create the `alamo-paddle-webhook`
       Cloudflare Worker (paste `worker.js`, add the 4 variables), then add
       the notification destination in Paddle using the worker's URL.
-- [ ] Point your subscribe button/page at the Paddle checkout link.
+- [x] Point your subscribe button/page at the Paddle checkout link.
 
 ## 5. First run (proves everything)
-- [ ] Actions → **"Build daily issue"** → Run workflow. It scrapes SA
+- [x] Actions → **"Build daily issue"** → Run workflow. It scrapes SA
       listings, picks candidates, pulls trawl comps (this also proves the
       trawl key from GitHub's network), and commits `drafts/YYYY-MM-DD.html`.
-- [ ] Read the draft. Edit it in the repo if you want (research notes are
+- [x] Read the draft. Edit it in the repo if you want (research notes are
       starter text — make them yours).
 - [ ] Actions → **"Send issue"** → Run workflow, enter the draft path.
       It creates a **draft** in Buttondown — review it there, then hit send

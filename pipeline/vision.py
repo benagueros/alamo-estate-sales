@@ -64,7 +64,9 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 REQUEST_SLEEP = 8
 
 EXCLUDE = ["parts", "manual", "brochure", "model", "print",
-           "poster", "book"]
+           "poster", "book",
+           # accessories, not the item itself
+           "band", "strap", "box", "clasp"]
 
 PROMPT_TEMPLATE = """You are curating finds for an estate-sale newsletter. These {n} photos are from one estate sale listing titled "{title}".
 

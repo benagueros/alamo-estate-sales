@@ -13,9 +13,10 @@ Auth: Authorization: Token $BUTTONDOWN_API_KEY
 Docs: https://docs.buttondown.com/api-emails-create
 
 email_type is "public" (goes to every subscriber) because the subscriber
-list IS the paying list — paid status is managed through Polar, and the
-Polar webhook adds buyers as subscribers via the API. If Buttondown-native
-paid tiers are ever used instead, switch this to "premium".
+list IS the paying list — paid status is managed through Paddle, and the
+Paddle webhook (Cloudflare Worker, ops/worker.js) adds buyers as
+subscribers via the API. If Buttondown-native paid tiers are ever used
+instead, switch this to "premium".
 """
 import json
 import os

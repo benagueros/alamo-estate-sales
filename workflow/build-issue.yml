@@ -73,6 +73,15 @@ jobs:
           print(f"trawl month={month} used={used} ok={ok}")
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"ok={'true' if ok else 'false'}\n")
+          if not ok:
+              # Guard tripped: write an empty brief so "Assemble issue draft"
+              # renders its n=0 path instead of crashing on a missing file.
+              # The draft still commits; Ben's writer pass sees the gap.
+              os.makedirs("out", exist_ok=True)
+              json.dump({"credits_charged": 0, "summaries": [],
+                         "verifications": [], "budget_skipped": True},
+                        open("out/comp-brief.json", "w"), indent=2)
+              print("budget guard tripped: wrote empty out/comp-brief.json")
           EOF
 
       - name: Fetch sold comps

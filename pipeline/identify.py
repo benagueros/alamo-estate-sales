@@ -104,7 +104,9 @@ def extract(sales, max_finds=4):
                 "weight": weight,
                 "evidence": find_evidence(desc, phrase),
                 "exclude": ["parts", "manual", "brochure", "model", "print",
-                            "poster", "book"],
+                            "poster", "book",
+                            # accessories, not the item itself
+                            "band", "strap", "box", "clasp"],
                 "source": "keyword",
             })
     candidates.sort(key=lambda c: -c["weight"])

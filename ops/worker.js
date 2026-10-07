@@ -41,11 +41,10 @@ async function customerEmail(customerId, env) {
   const r = await fetch(`${base}/customers/${customerId}`, {
     headers: { Authorization: `Bearer ${env.PADDLE_API_KEY}` },
   });
-  if (!r.ok) {
-    console.error("paddle customer lookup", r.status);
-    return null;
-  }
-  return (await r.json())?.data?.email ?? null;
+  if (!r.ok) throw new Error(`paddle customer lookup ${r.status}`);
+  const email = (await r.json())?.data?.email ?? null;
+  if (!email) throw new Error("paddle customer has no email");
+  return email;
 }
 
 async function buttondown(method, path, key, body) {
@@ -60,8 +59,8 @@ async function buttondown(method, path, key, body) {
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!r.ok) console.error("buttondown", r.status);
-  return r.ok;
+  if (!r.ok) throw new Error(`buttondown ${r.status} ${path}`);
+  return true;
 }
 
 export default {
@@ -75,15 +74,29 @@ export default {
     if (!customerId) return Response.json({ skipped: "no customer_id" });
 
     if (type === "subscription.activated" || type === "subscription.created") {
-      const email = await customerEmail(customerId, env);
-      if (email) await buttondown("POST", "/subscribers", env.BUTTONDOWN_API_KEY,
-        { email_address: email, type: "regular", tags: ["alamo-estate-sales"] });
+      // A failure here must NOT return 200: Paddle only retries on 5xx,
+      // and a 200 would silently drop a paying subscriber.
+      let email;
+      try {
+        email = await customerEmail(customerId, env);
+        await buttondown("POST", "/subscribers", env.BUTTONDOWN_API_KEY,
+          { email_address: email, type: "regular", tags: ["alamo-estate-sales"] });
+      } catch (e) {
+        console.error("provision failed:", e.message);
+        return new Response("subscriber provisioning failed", { status: 502 });
+      }
     } else if (type === "subscription.canceled") {
       // Stop future issues; keep them archived, not deleted.
-      const email = await customerEmail(customerId, env);
-      if (email) await buttondown("PATCH",
-        `/subscribers/${encodeURIComponent(email)}`, env.BUTTONDOWN_API_KEY,
-        { type: "unsubscribed" });
+      // Same 5xx-on-failure rule: the cancel must eventually be processed.
+      try {
+        const email = await customerEmail(customerId, env);
+        await buttondown("PATCH",
+          `/subscribers/${encodeURIComponent(email)}`, env.BUTTONDOWN_API_KEY,
+          { type: "unsubscribed" });
+      } catch (e) {
+        console.error("cancel failed:", e.message);
+        return new Response("cancel processing failed", { status: 502 });
+      }
     }
     // subscription.updated / past_due: Paddle retries on its own; the
     // subscriber stays until the subscription actually cancels.

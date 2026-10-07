@@ -22,6 +22,7 @@ Credit math (free tier = 250/mo, no card; per trawl.dev/agent-setup/SKILL.md):
 """
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -54,7 +55,10 @@ def api_get(path, params, api_key):
         if exc.code == 429:
             retry_after = exc.headers.get("Retry-After")
             if retry_after:  # per-second rate: wait once, retry once (free)
-                time.sleep(int(retry_after) + 1)
+                try:
+                    time.sleep(int(retry_after) + 1)
+                except (TypeError, ValueError):
+                    time.sleep(61)
                 with urllib.request.urlopen(req, timeout=60) as resp:
                     return json.load(resp), resp.headers
             raise QuotaSpent(f"monthly credits spent (no Retry-After); body={body}")
@@ -65,7 +69,9 @@ def same_item(title, query_words, exclude):
     t = (title or "").lower()
     if any(w not in t for w in query_words):
         return False
-    return not any(x.lower() in t for x in exclude)
+    # word-boundary matching: "box" must not nuke "boombox"
+    return not any(re.search(r"\b" + re.escape(x.lower()) + r"\b", t)
+                   for x in exclude)
 
 
 def fetch_comps(find, api_key):
@@ -146,6 +152,49 @@ def summarize(find, listings):
     }
 
 
+def anchor_comps(comps):
+    """The comps behind the published numbers: lowest, closest-to-median,
+    highest (deduped). These are the ones the newsletter links to, so these
+    are the ones worth spending /item verification credits on."""
+    priced = [c for c in comps
+              if isinstance(c.get("sale_price"), (int, float))]
+    if not priced:
+        return []
+    by_price = sorted(priced, key=lambda c: c["sale_price"])
+    prices = [c["sale_price"] for c in by_price]
+    n = len(prices)
+    median = (prices[n // 2] if n % 2
+              else (prices[n // 2 - 1] + prices[n // 2]) / 2)
+    rep = min(by_price, key=lambda c: abs(c["sale_price"] - median))
+    anchors, seen = [], set()
+    for c in (by_price[0], rep, by_price[-1]):
+        key = c.get("item_id") or id(c)
+        if key not in seen:
+            seen.add(key)
+            anchors.append(c)
+    return anchors
+
+
+def summarize_verification(vresults, anchors):
+    """Attach sold-state outcomes to the summary so Ben's writer pass can
+    see which published comps actually confirmed as sold."""
+    by_id = {v["item_id"]: v for v in vresults}
+    passed, failed = [], []
+    for c in anchors:
+        v = by_id.get(c["item_id"], {})
+        entry = {"item_id": c["item_id"],
+                 "sale_price": c["sale_price"],
+                 "title": (c.get("title") or "")[:90]}
+        if v.get("verified"):
+            entry["listing_state"] = v.get("listing_state")
+            entry["best_offer"] = v.get("best_offer")
+            passed.append(entry)
+        else:
+            entry["note"] = v.get("note", "unverified")[:120]
+            failed.append(entry)
+    return {"checked": len(anchors), "passed": passed, "failed": failed}
+
+
 def brief_line(s):
     if s["n"] == 0:
         return (f"### {s['id']} (`{s['query']}`)\n"
@@ -157,11 +206,28 @@ def brief_line(s):
     # an editorial call, never an automated number.
     strong = round(s["median"] * 0.85, -1)
     buy = round(s["median"] * 0.70, -1)
-    return (f"### {s['id']} (`{s['query']}`)\n"
-            f"Sold comps {fmt(s['min'])} · {fmt(s['max'])} — median ≈ {fmt(s['median'])} "
-            f"(n={s['n']}{flag_txt})\n"
-            f"Deal-threshold starting point (writer adjusts): "
+    out = (f"### {s['id']} (`{s['query']}`)\n"
+           f"Sold comps {fmt(s['min'])} · {fmt(s['max'])} — median ≈ {fmt(s['median'])} "
+           f"(n={s['n']}{flag_txt})\n")
+    v = s.get("verification") or {}
+    if v.get("checked"):
+        npass = len(v.get("passed", []))
+        out += (f"Sold-state check: {npass}/{v['checked']} anchor comps "
+                f"confirmed sold")
+        failed = v.get("failed", [])
+        if failed:
+            desc = ", ".join(
+                f"{fmt(f['sale_price'])} ({f['note']})" for f in failed)
+            out += (f" — FAILED: {desc}. "
+                    f"(writer: these did NOT confirm as sold; "
+                    f"cut or replace before publishing)")
+        out += "\n"
+    elif s["n"] and not s.get("error"):
+        out += ("Sold-state check: not run for this find "
+                "(writer: treat comps as unconfirmed)\n")
+    out += (f"Deal-threshold starting point (writer adjusts): "
             f"under ~{fmt(strong)} is strong; under ~{fmt(buy)}, buy it on the spot.\n")
+    return out
 
 
 def main():
@@ -187,13 +253,24 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     total_credits = 0
     summaries, verifications = [], []
+    quota_spent = False
 
-    for find in finds:
+    for idx, find in enumerate(finds):
+        if quota_spent:
+            summaries.append({"id": find.get("id"), "query": find.get("query"),
+                              "n": 0, "error": "trawl quota spent earlier in run"})
+            continue
         try:
             listings, credits = fetch_comps(find, api_key)
         except QuotaSpent as exc:
-            print(f"STOPPING: {exc}")
-            return 3
+            # Graceful degradation: don't hard-fail the daily build.
+            # Remaining finds get n=0 summaries so issue.py renders its
+            # "no comps" path and the draft still commits.
+            print(f"STOPPING: {exc} — remaining finds get n=0")
+            quota_spent = True
+            summaries.append({"id": find.get("id"), "query": find.get("query"),
+                              "n": 0, "error": f"quota spent: {exc}"})
+            continue
         except Exception as exc:
             print(f"find '{find.get('id')}' failed (free, skipped): {exc}")
             summaries.append({"id": find.get("id"), "query": find.get("query"),
@@ -204,14 +281,19 @@ def main():
         summaries.append(s)
         print(f"{s['id']}: n={s['n']} (credits so far: {total_credits})")
         if verify and s.get("comps"):
-            # Best-Offer acceptances first (Ben's rule cares most about
-            # these), then fill up to the cap.
-            comps = sorted(s["comps"],
-                           key=lambda c: not c.get("best_offer"))
-            for c in comps[:verify_cap]:
+            # Verify the anchors — the comps behind the published
+            # min/median/max and the sold-listing links — not an arbitrary
+            # slice. Ben's rule is about what's published.
+            anchors = anchor_comps(s["comps"])[:verify_cap]
+            vresults = []
+            for c in anchors:
                 v = verify_listing(c["item_id"], api_key)
                 total_credits += 0 if not v["verified"] else 1
+                vresults.append({"find": s["id"], **v})
                 verifications.append({"find": s["id"], **v})
+            s["verification"] = summarize_verification(vresults, anchors)
+            npass = len(s["verification"]["passed"])
+            print(f"  verification: {npass}/{len(anchors)} anchors confirmed")
 
     brief = ("# Comp brief — Alamo Estate Deals\n\n"
              f"Total trawl credits charged this run: ~{total_credits}\n\n"

@@ -99,6 +99,18 @@ def find_card(find, sale, summary):
         flags = comp.get("flags") or []
         if flags:
             comps_line += f" <em>({' ; '.join(html.escape(f) for f in flags)})</em>"
+        v = comp.get("verification") or {}
+        if v.get("checked"):
+            npass = len(v.get("passed", []))
+            nfail = len(v.get("failed", []))
+            vline = f"Sold-state check: {npass}/{v['checked']} anchor comps confirmed"
+            if nfail:
+                vline += (f' <span class="writer-note">(writer: {nfail} comp(s) '
+                          f'did NOT confirm as sold — cut or replace before publishing)</span>')
+            comps_line += f"<br>{vline}"
+        elif not comp.get("error"):
+            comps_line += ("<br>Sold-state check: not run "
+                           "<em>(writer: treat comps as unconfirmed)</em>")
         links = sold_links_html(comp)
         if links:
             comps_line += f'<br><span class="soldlinks">Sold listings: {links}</span>'
@@ -191,7 +203,13 @@ def main():
         return 2
     sales = json.load(open(sys.argv[1]))
     finds = json.load(open(sys.argv[2]))
-    brief = json.load(open(sys.argv[3]))
+    brief_path = sys.argv[3]
+    try:
+        brief = json.load(open(brief_path))
+    except (FileNotFoundError, json.JSONDecodeError):
+        # Comp step skipped or failed: render finds with the n=0 path
+        # rather than crashing the daily build.
+        brief = {"summaries": []}
     date_str = datetime.date.today().isoformat()
     for i, a in enumerate(sys.argv[4:]):
         if a == "--date" and i + 1 < len(sys.argv[4:]):

@@ -3,7 +3,7 @@
 San Antonio estate-sale newsletter: every morning, scrape the week's SA
 listings, identify candidate finds, pull eBay **sold** comps via trawl.dev,
 assemble the issue in deal-threshold format, and stage it for send.
-$5/mo via Polar, delivered via Buttondown. Nothing publishes without a
+$5/mo via Paddle, delivered via Buttondown. Nothing publishes without a
 human review.
 
 ## How it runs (GitHub Actions)
@@ -46,7 +46,7 @@ buyers to Buttondown automatically.
 ## Setup
 
 See `SETUP.md` — Ben's checklist (repo, secrets, workflows via web UI,
-Buttondown, Polar, first run).
+Buttondown, Paddle, first run).
 
 ## Key rules (Ben, Oct 2026)
 
