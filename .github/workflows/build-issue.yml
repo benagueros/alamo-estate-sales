@@ -47,8 +47,16 @@ jobs:
         # Detail pages are capped at 25 in scrape.py; total runtime ~10 min.
         run: python3 pipeline/scrape.py --out sales.json
 
-      - name: Identify candidates
-        run: python3 pipeline/identify.py sales.json --out finds.json --max-finds 4
+      - name: Identify candidates (keywords)
+        run: python3 pipeline/identify.py sales.json --out finds_kw.json --max-finds 4
+
+      - name: Identify candidates (vision)
+        # Gemini Flash over listing photos: brand + MODEL, not just brand.
+        # Needs repo secret GEMINI_API_KEY (free AI Studio key). Without it
+        # the step skips gracefully and keyword finds carry the issue.
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python3 pipeline/vision.py sales.json --merge finds_kw.json --out finds.json --max-finds 4
 
       - name: Check trawl credit budget
         id: budget
