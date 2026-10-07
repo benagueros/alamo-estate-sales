@@ -24,6 +24,11 @@ keyword finds are folded in: vision outranks keyword, and for the same sale
 a more specific query subsumes a vaguer one ("rolex datejust 36" drops bare
 "rolex").
 
+Photos: the model reports the clearest photo number per item ("photo"), and
+--merge keyword queries go along as a watchlist so the model locates those
+too — each find carries "photo_index" and the issue shows the photo of the
+actual item, not the sale cover.
+
 Free-tier math: ~13 sales/day x 1 request (up to 4 photos each) = ~13
 requests/day, far under Gemini's free 1,500/day. 8s between requests keeps
 us under the ~15 RPM per-minute ceiling even when sibling projects on the
@@ -70,11 +75,18 @@ For each item, provide:
 - "query": 2-4 word eBay-style search for sold comps, e.g. "rolex datejust 36"
 - "confidence": "high" if brand AND model are clearly identifiable from the photos, "medium" if the brand is clear but the exact model is an educated inference
 - "detail": one short line naming what you see that supports the ID, referencing photo numbers, e.g. "Photo 2: dial reads DATEJUST, fluted bezel, jubilee bracelet"
+- "photo": the number of the photo showing this item most clearly (1-{n})
 
 Rules:
 - Only list items where you can name a real brand. Skip generic household goods, ordinary furniture, and decor.
 - List at most 4 items, best first. If nothing of clear resale value is identifiable, return {{"items": []}}.
-- Respond with JSON only, no other text.
+- Respond with JSON only, no other text: {{"items": [{{"label": ..., "query": ..., "confidence": ..., "detail": ..., "photo": 1}}]}}
+{watchlist_block}"""
+
+
+WATCHLIST_INSTRUCTIONS = """Also locate these watchlist items: return "watchlist", an object mapping each query to the number of the photo showing that item most clearly, or null if not clearly visible in any photo.
+WATCHLIST: {watchlist_json}
+Response shape: {{"items": [...], "watchlist": {{"<query>": 2}}}}
 """
 
 
@@ -190,13 +202,37 @@ def parse_items(resp):
         conf = str(it.get("confidence", "")).lower().strip()
         if conf not in ("high", "medium"):
             continue
+        try:
+            photo = int(it.get("photo"))
+            photo_index = photo if photo >= 1 else None
+        except (TypeError, ValueError):
+            photo_index = None
         out.append({
             "label": label,
             "query": query,
             "weight": 3 if conf == "high" else 2,
             "detail": str(it.get("detail", ""))[:280].strip(),
+            "photo_index": photo_index,
         })
     return out[:4]
+
+
+def parse_watchlist(resp, queries):
+    """{query: photo_index or None} for the watchlist. Never raises."""
+    try:
+        text = resp["candidates"][0]["content"]["parts"][0]["text"]
+        wl = json.loads(text).get("watchlist", {})
+    except Exception:
+        return {}
+    out = {}
+    for q in queries:
+        ph = wl.get(q) if isinstance(wl, dict) else None
+        try:
+            ph = int(ph)
+            out[q] = ph if ph >= 1 else None
+        except (TypeError, ValueError):
+            out[q] = None
+    return out
 
 
 def slugify(query):
@@ -204,7 +240,7 @@ def slugify(query):
 
 
 def to_find(item, sale):
-    return {
+    find = {
         "id": slugify(item["query"]),
         "query": item["query"],
         "sale_id": sale.get("id"),
@@ -214,6 +250,9 @@ def to_find(item, sale):
         "exclude": list(EXCLUDE),
         "source": "vision",
     }
+    if item.get("photo_index"):
+        find["photo_index"] = item["photo_index"]
+    return find
 
 
 def drop_subsumed(finds):
@@ -268,8 +307,12 @@ def main():
 
     sales = json.load(open(sales_path))
     keyword_finds = json.load(open(merge_path)) if merge_path else []
+    kw_by_sale = {}
+    for f in keyword_finds:
+        kw_by_sale.setdefault(f.get("sale_id"), []).append(f["query"])
 
     vision_finds = []
+    watchlist_photos = {}  # (sale_id, query) -> photo_index
     if not GEMINI_API_KEY:
         print("vision skipped: GEMINI_API_KEY not set (keyword finds only)")
     else:
@@ -286,8 +329,12 @@ def main():
                     images.append(img)
             if not images:
                 continue
+            watchlist = kw_by_sale.get(sale.get("id"), [])
+            watchlist_block = (WATCHLIST_INSTRUCTIONS.format(
+                watchlist_json=json.dumps(watchlist)) if watchlist else "")
             prompt = PROMPT_TEMPLATE.format(
-                n=len(images), title=(sale.get("title") or "")[:120])
+                n=len(images), title=(sale.get("title") or "")[:120],
+                watchlist_block=watchlist_block)
             resp, err, tried = None, None, []
             saw_429, saw_other_error = False, False
             # working model first, then the rest — no skip logic needed
@@ -355,12 +402,21 @@ def main():
                 print(f"  vision model: {working}")
             for item in parse_items(resp):
                 vision_finds.append(to_find(item, sale))
+            for q, ph in parse_watchlist(resp, watchlist).items():
+                if ph:
+                    watchlist_photos[(sale.get("id"), q)] = ph
             print(f"  {sale.get('id')}: vision found "
                   f"{len([f for f in vision_finds if f['sale_id'] == sale.get('id')])} item(s)")
             time.sleep(REQUEST_SLEEP)
 
     finds = (merge_finds(keyword_finds, vision_finds, max_finds)
              if merge_path else vision_finds[:max_finds])
+    # keyword finds that survived the merge get their watchlist photo, if any
+    for f in finds:
+        if f.get("source") == "keyword" and "photo_index" not in f:
+            ph = watchlist_photos.get((f.get("sale_id"), f["query"]))
+            if ph:
+                f["photo_index"] = ph
     json.dump(finds, open(out, "w"), indent=2)
     for f in finds:
         print(f"- {f['id']}: `{f['query']}` [{f.get('source')}] <- "

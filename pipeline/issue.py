@@ -37,8 +37,60 @@ def money(v):
     return f"${v:,.0f}"
 
 
+def find_photo(find, sale):
+    """The photo showing THIS find: vision photo_index when we have one
+    (vision item or watchlist-located keyword item), else the sale cover."""
+    urls = sale.get("photo_urls") or []
+    if not urls:
+        return ""
+    try:
+        idx = int(find.get("photo_index") or 0) - 1
+    except (TypeError, ValueError):
+        idx = -1
+    if 0 <= idx < len(urls):
+        return urls[idx]
+    return urls[0]
+
+
+def short_date(ds):
+    try:
+        m, d = (ds or "")[:10].split("-")[1:3]
+        return f"{int(m)}/{int(d)}"
+    except Exception:
+        return ""
+
+
+def sold_links_html(comp):
+    """Links to the sold listings behind the summary: lowest, closest to
+    the median, highest (deduped). Readers can spot-check the comps."""
+    comps = [c for c in (comp.get("comps") or [])
+             if c.get("item_link")
+             and isinstance(c.get("sale_price"), (int, float))]
+    if not comps:
+        return ""
+    median = comp.get("median") or 0
+    by_price = sorted(comps, key=lambda c: c["sale_price"])
+    rep = min(comps, key=lambda c: abs(c["sale_price"] - median))
+    picks, seen = [], set()
+    for c in (by_price[0], rep, by_price[-1]):
+        key = c.get("item_id") or id(c)
+        if key not in seen:
+            seen.add(key)
+            picks.append(c)
+    picks.sort(key=lambda c: c["sale_price"])
+    parts = []
+    for c in picks:
+        label = money(c["sale_price"])
+        d = short_date(c.get("date_sold"))
+        if d:
+            label += f" · {d}"
+        parts.append(
+            f'<a href="{html.escape(c["item_link"])}">{label}</a>')
+    return " · ".join(parts)
+
+
 def find_card(find, sale, summary):
-    photo = (sale.get("photo_urls") or [""])[0]
+    photo = find_photo(find, sale)
     comp = summary or {}
     n = comp.get("n", 0)
     if n:
@@ -47,6 +99,9 @@ def find_card(find, sale, summary):
         flags = comp.get("flags") or []
         if flags:
             comps_line += f" <em>({' ; '.join(html.escape(f) for f in flags)})</em>"
+        links = sold_links_html(comp)
+        if links:
+            comps_line += f'<br><span class="soldlinks">Sold listings: {links}</span>'
         strong = round(comp["median"] * 0.85, -1)
         buy = round(comp["median"] * 0.70, -1)
         threshold = (f"Under ~{money(strong)} is strong. "
@@ -99,6 +154,8 @@ header{{text-align:center;border-bottom:3px solid #b4552d;padding-bottom:16px;ma
 .find h2{{margin:6px 0 12px;font-size:24px}}
 .find img{{width:100%;border-radius:6px;margin-bottom:12px}}
 .comps,.threshold,.note{{font-size:15px;line-height:1.55}}
+.soldlinks{{font-family:system-ui,sans-serif;font-size:13px;color:#555}}
+.soldlinks a{{color:#b4552d}}
 .sale{{font-family:system-ui,sans-serif;font-size:13px;color:#555;line-height:1.6}}
 .sale a{{color:#b4552d}}
 .writer-note{{color:#b4552d;font-style:italic}}
