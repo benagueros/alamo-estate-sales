@@ -59,8 +59,16 @@ async function buttondown(method, path, key, body) {
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!r.ok) throw new Error(`buttondown ${r.status} ${path}`);
-  return true;
+  if (r.ok) return true;
+  const text = await r.text().catch(() => "");
+  // Idempotent retry: Paddle redelivers on 5xx, so "already exists" (or
+  // "already unsubscribed") is the desired end state, not a failure.
+  // Without this, a duplicate delivery would 502-loop until Paddle gives up.
+  if (/already/i.test(text)) {
+    console.log(`buttondown ${path}: already done, treating as success`);
+    return true;
+  }
+  throw new Error(`buttondown ${r.status} ${path}: ${text.slice(0, 120)}`);
 }
 
 export default {

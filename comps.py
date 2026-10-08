@@ -116,15 +116,27 @@ def verify_listing(item_id, api_key):
     }
 
 
-def summarize(find, listings):
-    prices = sorted(r["sale_price"] for r in listings
-                    if isinstance(r.get("sale_price"), (int, float)))
+def median_of(prices):
+    """Median of a sorted price list. Shared by summarize() and
+    anchor_comps() so the two can never drift."""
     n = len(prices)
     if n == 0:
-        return {"id": find["id"], "query": find["query"], "n": 0}
+        return 0
     mid = n // 2
-    median = (prices[mid - 1] + prices[mid]) / 2 if n % 2 == 0 else prices[mid]
-    best_offer = [r for r in listings if r.get("best_offer_available")]
+    return (prices[mid - 1] + prices[mid]) / 2 if n % 2 == 0 else prices[mid]
+
+
+def compute_stats(find, comps):
+    """Stats + flags over normalized comp dicts. Used by summarize() and
+    re-used after verification to drop failed anchors from the published
+    numbers (Ben's hard rule: no unverified comp in the published stats)."""
+    prices = sorted(c["sale_price"] for c in comps
+                    if isinstance(c.get("sale_price"), (int, float)))
+    n = len(prices)
+    if n == 0:
+        return {"id": find["id"], "query": find["query"], "n": 0, "comps": comps}
+    median = median_of(prices)
+    best_offer = [c for c in comps if c.get("best_offer")]
     flags = []
     if n < THIN_N:
         flags.append(f"thin: only {n} same-item sold{'s' if n != 1 else ''} in the dataset")
@@ -138,18 +150,23 @@ def summarize(find, listings):
         "min": prices[0],
         "max": prices[-1],
         "median": round(median, 2),
-        "best_offer_ids": [r.get("item_id") for r in best_offer],
+        "best_offer_ids": [c.get("item_id") for c in best_offer],
         "flags": flags,
-        "comps": [
-            {"item_id": r.get("item_id"), "title": r.get("title"),
-             "sale_price": r.get("sale_price"),
-             "date_sold": r.get("date_sold"),
-             "buying_format": r.get("buying_format"),
-             "best_offer": bool(r.get("best_offer_available")),
-             "item_link": r.get("item_link")}
-            for r in listings
-        ],
+        "comps": comps,
     }
+
+
+def summarize(find, listings):
+    comps = [
+        {"item_id": r.get("item_id"), "title": r.get("title"),
+         "sale_price": r.get("sale_price"),
+         "date_sold": r.get("date_sold"),
+         "buying_format": r.get("buying_format"),
+         "best_offer": bool(r.get("best_offer_available")),
+         "item_link": r.get("item_link")}
+        for r in listings
+    ]
+    return compute_stats(find, comps)
 
 
 def anchor_comps(comps):
@@ -157,14 +174,12 @@ def anchor_comps(comps):
     highest (deduped). These are the ones the newsletter links to, so these
     are the ones worth spending /item verification credits on."""
     priced = [c for c in comps
-              if isinstance(c.get("sale_price"), (int, float))]
+              if isinstance(c.get("sale_price"), (int, float))
+              and c.get("item_id")]
     if not priced:
         return []
     by_price = sorted(priced, key=lambda c: c["sale_price"])
-    prices = [c["sale_price"] for c in by_price]
-    n = len(prices)
-    median = (prices[n // 2] if n % 2
-              else (prices[n // 2 - 1] + prices[n // 2]) / 2)
+    median = median_of([c["sale_price"] for c in by_price])
     rep = min(by_price, key=lambda c: abs(c["sale_price"] - median))
     anchors, seen = [], set()
     for c in (by_price[0], rep, by_price[-1]):
@@ -178,12 +193,12 @@ def anchor_comps(comps):
 def summarize_verification(vresults, anchors):
     """Attach sold-state outcomes to the summary so Ben's writer pass can
     see which published comps actually confirmed as sold."""
-    by_id = {v["item_id"]: v for v in vresults}
+    by_id = {v.get("item_id"): v for v in vresults}
     passed, failed = [], []
     for c in anchors:
-        v = by_id.get(c["item_id"], {})
-        entry = {"item_id": c["item_id"],
-                 "sale_price": c["sale_price"],
+        v = by_id.get(c.get("item_id"), {})
+        entry = {"item_id": c.get("item_id"),
+                 "sale_price": c.get("sale_price"),
                  "title": (c.get("title") or "")[:90]}
         if v.get("verified"):
             entry["listing_state"] = v.get("listing_state")
@@ -287,13 +302,36 @@ def main():
             anchors = anchor_comps(s["comps"])[:verify_cap]
             vresults = []
             for c in anchors:
-                v = verify_listing(c["item_id"], api_key)
-                total_credits += 0 if not v["verified"] else 1
+                try:
+                    v = verify_listing(c.get("item_id"), api_key)
+                except Exception as exc:  # never crash the daily build
+                    v = {"item_id": c.get("item_id"), "verified": False,
+                         "note": f"verify error: {exc}"[:120]}
+                # Count every call against the budget, not just successes:
+                # undercounting risks blowing past the real free-tier cap.
+                total_credits += 1
                 vresults.append({"find": s["id"], **v})
                 verifications.append({"find": s["id"], **v})
-            s["verification"] = summarize_verification(vresults, anchors)
-            npass = len(s["verification"]["passed"])
+            verification = summarize_verification(vresults, anchors)
+            s["verification"] = verification
+            npass = len(verification["passed"])
             print(f"  verification: {npass}/{len(anchors)} anchors confirmed")
+            # Hard rule: a failed anchor is a known-bad comp — drop it from
+            # the published stats and links, then recompute. (The writer
+            # note below still tells Ben what was removed.)
+            failed_ids = {f.get("item_id") for f in verification["failed"]}
+            if failed_ids:
+                kept = [c for c in s["comps"]
+                        if c.get("item_id") not in failed_ids]
+                dropped = len(s["comps"]) - len(kept)
+                s = compute_stats(find, kept)
+                s["verification"] = verification
+                s["flags"] = (s.get("flags") or []) + [
+                    f"{dropped} anchor comp(s) failed sold-state verification "
+                    f"and were removed from these stats"]
+                summaries[-1] = s
+                print(f"  dropped {dropped} failed anchor(s); "
+                      f"stats recomputed (n={s['n']})")
 
     brief = ("# Comp brief — Alamo Estate Deals\n\n"
              f"Total trawl credits charged this run: ~{total_credits}\n\n"
