@@ -119,7 +119,19 @@ def find_card(find, sale, summary):
         threshold = (f"Under ~{money(strong)} is strong. "
                      f"Under ~{money(buy)}, buy it on the spot.")
     else:
-        comps_line = "No same-item solds in the dataset — query too narrow or no eBay market."
+        v = comp.get("verification") or {}
+        if v.get("failed"):
+            comps_line = (f"No verified solds — {len(v['failed'])} anchor comp(s) "
+                          f"did not confirm as sold and were removed. "
+                          f"<span class=\"writer-note\">(writer: do not publish "
+                          f"without confirmed comps)</span>")
+        elif comp.get("error"):
+            comps_line = f"No comps ({html.escape(str(comp['error']))})."
+        else:
+            comps_line = "No same-item solds in the dataset — query too narrow or no eBay market."
+        flags = comp.get("flags") or []
+        if flags:
+            comps_line += f" <em>({' ; '.join(html.escape(f) for f in flags)})</em>"
         threshold = "No threshold: needs a wider query or a different find."
     addr = sale.get('address', '') or (
         "Online auction" if sale.get('online') else "")

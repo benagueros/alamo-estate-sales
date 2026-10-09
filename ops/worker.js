@@ -47,6 +47,15 @@ async function customerEmail(customerId, env) {
   return email;
 }
 
+async function buttondownGet(path, key) {
+  const r = await fetch(`https://api.buttondown.com/v1${path}`, {
+    headers: { Authorization: `Token ${key}` },
+  });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`buttondown GET ${r.status} ${path}`);
+  return r.json();
+}
+
 async function buttondown(method, path, key, body) {
   // No subscriber IP is available from a webhook, so bypass Buttondown's
   // signup firewall (5/hr limit — fine at this scale).
@@ -68,7 +77,31 @@ async function buttondown(method, path, key, body) {
     console.log(`buttondown ${path}: already done, treating as success`);
     return true;
   }
+  // Unsubscribing someone who isn't on the list: desired end state already
+  // holds. (POST 404s still throw — that's a real config problem.)
+  if (method === "PATCH" && r.status === 404) {
+    console.log(`buttondown ${path}: not found on unsubscribe, treating as success`);
+    return true;
+  }
   throw new Error(`buttondown ${r.status} ${path}: ${text.slice(0, 120)}`);
+}
+
+async function ensureSubscribed(email, key) {
+  // Resubscribe path matters: a canceled-then-resubscribing payer still has
+  // a Buttondown record typed "unsubscribed". A blind POST would hit
+  // "already exists", we'd call it success, and they'd stay unsubscribed
+  // while paying. So: GET first, PATCH back to regular if inactive.
+  const id = encodeURIComponent(email);
+  const sub = await buttondownGet(`/subscribers/${id}`, key);
+  if (!sub) {
+    await buttondown("POST", "/subscribers", key,
+      { email_address: email, type: "regular", tags: ["alamo-estate-sales"] });
+    return;
+  }
+  if (sub.type === "unsubscribed") {
+    await buttondown("PATCH", `/subscribers/${id}`, key, { type: "regular" });
+  }
+  // already regular → nothing to do
 }
 
 export default {
@@ -84,11 +117,9 @@ export default {
     if (type === "subscription.activated" || type === "subscription.created") {
       // A failure here must NOT return 200: Paddle only retries on 5xx,
       // and a 200 would silently drop a paying subscriber.
-      let email;
       try {
-        email = await customerEmail(customerId, env);
-        await buttondown("POST", "/subscribers", env.BUTTONDOWN_API_KEY,
-          { email_address: email, type: "regular", tags: ["alamo-estate-sales"] });
+        const email = await customerEmail(customerId, env);
+        await ensureSubscribed(email, env.BUTTONDOWN_API_KEY);
       } catch (e) {
         console.error("provision failed:", e.message);
         return new Response("subscriber provisioning failed", { status: 502 });

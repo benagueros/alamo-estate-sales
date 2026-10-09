@@ -17,8 +17,10 @@ Credit math (free tier = 250/mo, no card; per trawl.dev/agent-setup/SKILL.md):
     max_pages. Zero-result searches and errors are free.
   - 429 WITH Retry-After = per-second rate: wait and retry once (free).
     429 WITHOUT it = monthly credits spent: STOP, do not retry-loop.
-  - --verify fetches /item per surviving comp: 1 credit per successful call
-    (404s and removed-listing 200s are free). Capped at 10 comps.
+  - --verify fetches /item per anchor comp (lowest, closest-to-median,
+    highest — the ones behind the published numbers): 1 credit per call,
+    counted whether or not it succeeds. Capped by --verify-cap (default 10,
+    anchors are at most 3/find).
 """
 import json
 import os
@@ -97,8 +99,20 @@ def fetch_comps(find, api_key):
     return listings, credits
 
 
+# trawl /item listing states that count as a completed sale.
+# "removed" = the sold listing was taken down (trawl's normal signal for a
+# real sale). Unknown states fail CLOSED: an unverified comp must never
+# publish, so anything we don't recognize is treated as not-sold.
+SOLD_STATES = {"removed"}
+
+
 def verify_listing(item_id, api_key):
-    """Ben's rule: sold-state verification before any comp publishes."""
+    """Ben's rule: sold-state verification before any comp publishes.
+
+    verified=True only on positive evidence of a completed sale:
+    listing_state in SOLD_STATES, or an active multi-quantity listing with
+    recorded sales. Anything else (unknown state, no sales, API error)
+    verifies False — fail closed, never publish on ambiguity."""
     try:
         data, _ = api_get("/item", {"item_id": item_id}, api_key)
     except Exception as exc:
@@ -106,13 +120,16 @@ def verify_listing(item_id, api_key):
     details = data.get("details", data)
     state = details.get("listing_state")
     sales = details.get("sales") or []
+    multi = len(sales) if state == "active" else 0
+    sold = state in SOLD_STATES or multi > 0
     return {
         "item_id": item_id,
-        "verified": True,
-        "listing_state": state,          # "removed" = real sale, no details
+        "verified": sold,
+        "listing_state": state,
+        "note": "" if sold else f"listing_state={state!r}: not a completed sale",
         "sale_price": data.get("sale_price"),
         "best_offer": bool(details.get("best_offer_available")),
-        "multi_quantity_sales": len(sales) if state == "active" else 0,
+        "multi_quantity_sales": multi,
     }
 
 
@@ -141,8 +158,7 @@ def compute_stats(find, comps):
     if n < THIN_N:
         flags.append(f"thin: only {n} same-item sold{'s' if n != 1 else ''} in the dataset")
     if best_offer:
-        flags.append(f"{len(best_offer)} of {n} comp(s) were Best-Offer acceptances "
-                     "-- flag sold-state verification before publishing")
+        flags.append(f"{len(best_offer)} of {n} comp(s) were Best-Offer acceptances")
     return {
         "id": find["id"],
         "query": find["query"],
@@ -205,16 +221,29 @@ def summarize_verification(vresults, anchors):
             entry["best_offer"] = v.get("best_offer")
             passed.append(entry)
         else:
-            entry["note"] = v.get("note", "unverified")[:120]
+            entry["note"] = (v.get("note") or "unverified")[:120]
             failed.append(entry)
     return {"checked": len(anchors), "passed": passed, "failed": failed}
 
 
 def brief_line(s):
     if s["n"] == 0:
-        return (f"### {s['id']} (`{s['query']}`)\n"
-                "Sold comps: none — query too narrow or no market on eBay. "
-                "Widen the query (brand + model + noun) or drop it from the issue.\n")
+        out = f"### {s['id']} (`{s['query']}`)\n"
+        v = s.get("verification") or {}
+        if v.get("failed"):
+            # Don't mislead: this isn't "no market", it's "no CONFIRMED comps".
+            nfail = len(v["failed"])
+            out += (f"Sold comps: none verified — {nfail} anchor comp(s) did "
+                    f"not confirm as sold and were removed. "
+                    f"(writer: do not publish this find without confirmed comps)\n")
+        elif s.get("error"):
+            out += f"Sold comps: none ({s['error']}).\n"
+        else:
+            out += ("Sold comps: none — query too narrow or no market on eBay. "
+                    "Widen the query (brand + model + noun) or drop it from the issue.\n")
+        if s.get("flags"):
+            out += f"({' ; '.join(s['flags'])})\n"
+        return out
     flag_txt = f" ({'; '.join(s['flags'])})" if s["flags"] else ""
     fmt = lambda v: f"${v:,.0f}"
     # Suggested starting points for the writer; the published threshold stays
@@ -327,7 +356,7 @@ def main():
                 s = compute_stats(find, kept)
                 s["verification"] = verification
                 s["flags"] = (s.get("flags") or []) + [
-                    f"{dropped} anchor comp(s) failed sold-state verification "
+                    f"{dropped} anchor comp(s) did not confirm as sold "
                     f"and were removed from these stats"]
                 summaries[-1] = s
                 print(f"  dropped {dropped} failed anchor(s); "
