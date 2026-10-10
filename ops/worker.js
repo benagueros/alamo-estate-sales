@@ -98,7 +98,9 @@ async function ensureSubscribed(email, key) {
       { email_address: email, type: "regular", tags: ["alamo-estate-sales"] });
     return;
   }
-  if (sub.type === "unsubscribed") {
+  if (sub.type !== "regular") {
+    // Any inactive state (unsubscribed, unactivated, undelivered, …):
+    // a paying subscriber must end up receiving the newsletter.
     await buttondown("PATCH", `/subscribers/${id}`, key, { type: "regular" });
   }
   // already regular → nothing to do

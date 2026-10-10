@@ -17,10 +17,13 @@ Credit math (free tier = 250/mo, no card; per trawl.dev/agent-setup/SKILL.md):
     max_pages. Zero-result searches and errors are free.
   - 429 WITH Retry-After = per-second rate: wait and retry once (free).
     429 WITHOUT it = monthly credits spent: STOP, do not retry-loop.
-  - --verify fetches /item per anchor comp (lowest, closest-to-median,
-    highest — the ones behind the published numbers): 1 credit per call,
-    counted whether or not it succeeds. Capped by --verify-cap (default 10,
-    anchors are at most 3/find).
+  - --verify checks /item for each anchor comp (lowest, closest-to-median,
+    highest — at most 3 per find). The cap (--verify-cap, default 10)
+    applies per find, so every anchor is always checked; it never silently
+    skips one. Every attempt counts 1 credit toward the monthly guard, even
+    failed calls: trawl's docs suggest failures aren't billed, but we count
+    them anyway so the guard can only trip early, never overspend the
+    free tier.
 """
 import json
 import os
@@ -361,6 +364,19 @@ def main():
                 summaries[-1] = s
                 print(f"  dropped {dropped} failed anchor(s); "
                       f"stats recomputed (n={s['n']})")
+
+    # Schema-change tripwire: unknown listing_state values fail closed, so
+    # a trawl schema change (e.g. a new "sold" state) would silently zero
+    # finds. Surface any unrecognized states loudly.
+    unknown_states = sorted({
+        v.get("listing_state") for v in verifications
+        if (v.get("note") or "").startswith("listing_state=")
+        and v.get("listing_state") not in SOLD_STATES
+        and v.get("listing_state") != "active"})
+    if unknown_states:
+        print(f"WARNING: unrecognized trawl listing_state values: "
+              f"{unknown_states} — check SOLD_STATES; finds may be "
+              f"under-verified due to a schema change, not bad comps")
 
     brief = ("# Comp brief — Alamo Estate Deals\n\n"
              f"Total trawl credits charged this run: ~{total_credits}\n\n"
