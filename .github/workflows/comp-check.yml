@@ -19,7 +19,7 @@ on:
       verify:
         description: "Run sold-state verification (/item per comp, ~1 credit each, max 10)"
         required: false
-        default: "false"
+        default: "true"
 
 jobs:
   comps:
