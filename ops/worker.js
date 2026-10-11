@@ -109,7 +109,7 @@ async function ensureSubscribed(email, key) {
 export default {
   async fetch(req, env) {
     const raw = await req.text();
-    if (!(await verify(raw, req.headers, env.PADDLE_WEBHOOK_SECRET))
+    if (!(await verify(raw, req.headers, env.PADDLE_WEBHOOK_SECRET)))
       return new Response("bad signature", { status: 401 });
     const evt = JSON.parse(raw);
     const type = evt.event_type ?? "";
