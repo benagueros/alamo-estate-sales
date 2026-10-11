@@ -62,10 +62,24 @@ def short_date(ds):
 
 def sold_links_html(comp):
     """Links to the sold listings behind the summary: lowest, closest to
-    the median, highest (deduped). Readers can spot-check the comps."""
-    comps = [c for c in (comp.get("comps") or [])
-             if c.get("item_link")
-             and isinstance(c.get("sale_price"), (int, float))]
+    the median, highest (deduped). Readers can spot-check the comps.
+
+    Hard rule: when sold-state verification ran, ONLY the anchors that
+    passed are linked. After a failed anchor is dropped and stats recompute,
+    the new min/median/max were never /item-verified — linking them would
+    publish unverified comps. When verification didn't run, falls back to
+    min/median/max (the card discloses that; the writer is the control)."""
+    v = comp.get("verification") or {}
+    all_comps = [c for c in (comp.get("comps") or [])
+                 if c.get("item_link")
+                 and isinstance(c.get("sale_price"), (int, float))]
+    if not all_comps:
+        return ""
+    if v.get("checked"):
+        verified_ids = {p.get("item_id") for p in v.get("passed", [])}
+        comps = [c for c in all_comps if c.get("item_id") in verified_ids]
+    else:
+        comps = all_comps
     if not comps:
         return ""
     median = comp.get("median") or 0
@@ -89,7 +103,7 @@ def sold_links_html(comp):
     return " · ".join(parts)
 
 
-def find_card(find, sale, summary):
+def find_card(find, sale, summary, budget_skipped=False):
     photo = find_photo(find, sale)
     comp = summary or {}
     n = comp.get("n", 0)
@@ -105,8 +119,9 @@ def find_card(find, sale, summary):
             nfail = len(v.get("failed", []))
             vline = f"Sold-state check: {npass}/{v['checked']} anchor comps confirmed"
             if nfail:
-                vline += (f' <span class="writer-note">(writer: {nfail} comp(s) '
-                          f'did NOT confirm as sold — cut or replace before publishing)</span>')
+                vline += (f' <span class="writer-note">(writer: {nfail} failed '
+                          f'anchor(s) removed; remaining stats unverified — '
+                          f'confirm before publishing)</span>')
             comps_line += f"<br>{vline}"
         elif not comp.get("error"):
             comps_line += ("<br>Sold-state check: not run "
@@ -114,8 +129,8 @@ def find_card(find, sale, summary):
         links = sold_links_html(comp)
         if links:
             comps_line += f'<br><span class="soldlinks">Sold listings: {links}</span>'
-        strong = round(comp["median"] * 0.85, -1)
-        buy = round(comp["median"] * 0.70, -1)
+        strong = max(1, round(comp["median"] * 0.85, -1))
+        buy = max(1, round(comp["median"] * 0.70, -1))
         threshold = (f"Under ~{money(strong)} is strong. "
                      f"Under ~{money(buy)}, buy it on the spot.")
     else:
@@ -127,6 +142,10 @@ def find_card(find, sale, summary):
                           f"without confirmed comps)</span>")
         elif comp.get("error"):
             comps_line = f"No comps ({html.escape(str(comp['error']))})."
+        elif budget_skipped:
+            comps_line = ("Comps skipped — monthly trawl credit guard tripped. "
+                          "<span class=\"writer-note\">(writer: not a no-market "
+                          "signal; re-run when credits reset)</span>")
         else:
             comps_line = "No same-item solds in the dataset — query too narrow or no eBay market."
         flags = comp.get("flags") or []
@@ -161,10 +180,12 @@ def find_card(find, sale, summary):
 def build(sales, finds, brief, date_str):
     by_id = {s.get("id"): s for s in sales}
     summaries = {s["id"]: s for s in brief.get("summaries", [])}
+    budget_skipped = brief.get("budget_skipped", False)
     cards = []
     for find in finds:
         sale = by_id.get(find.get("sale_id"), {})
-        cards.append(find_card(find, sale, summaries.get(find["id"])))
+        cards.append(find_card(find, sale, summaries.get(find["id"]),
+                               budget_skipped))
     try:
         pretty = datetime.date.fromisoformat(date_str).strftime("%A, %B %-d, %Y")
     except ValueError:

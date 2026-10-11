@@ -116,9 +116,11 @@ export default {
     const customerId = evt.data?.customer_id;
     if (!customerId) return Response.json({ skipped: "no customer_id" });
 
-    if (type === "subscription.activated" || type === "subscription.created") {
-      // A failure here must NOT return 200: Paddle only retries on 5xx,
-      // and a 200 would silently drop a paying subscriber.
+    // Grant access only on activation: subscription.created can fire for
+    // subscriptions that never complete payment. A failure here must NOT
+    // return 200: Paddle only retries on 5xx, and a 200 would silently
+    // drop a paying subscriber.
+    if (type === "subscription.activated") {
       try {
         const email = await customerEmail(customerId, env);
         await ensureSubscribed(email, env.BUTTONDOWN_API_KEY);

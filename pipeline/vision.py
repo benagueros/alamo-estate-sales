@@ -253,7 +253,12 @@ def to_find(item, sale):
         "source": "vision",
     }
     if item.get("photo_index"):
-        find["photo_index"] = item["photo_index"]
+        # Validate against the sale's actual photo count. A model-hallucinated
+        # index (e.g. 9 of 4) is dropped here so issue.py falls back to the
+        # cover photo — safer than clamping to an arbitrary wrong photo.
+        n_photos = len(sale.get("photo_urls") or [])
+        if 1 <= item["photo_index"] <= n_photos:
+            find["photo_index"] = item["photo_index"]
     return find
 
 

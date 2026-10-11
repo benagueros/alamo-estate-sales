@@ -36,7 +36,7 @@ import urllib.request
 
 BASE = "https://api.trawl.dev/ebay/v1"
 THIN_N = 5            # fewer than this = flag dataset as thin
-VERIFY_CAP = 10       # max /item verifications per run
+VERIFY_CAP = 10       # max /item verifications per find (anchors are at most 3)
 
 
 class QuotaSpent(Exception):
@@ -251,8 +251,8 @@ def brief_line(s):
     fmt = lambda v: f"${v:,.0f}"
     # Suggested starting points for the writer; the published threshold stays
     # an editorial call, never an automated number.
-    strong = round(s["median"] * 0.85, -1)
-    buy = round(s["median"] * 0.70, -1)
+    strong = max(1, round(s["median"] * 0.85, -1))
+    buy = max(1, round(s["median"] * 0.70, -1))
     out = (f"### {s['id']} (`{s['query']}`)\n"
            f"Sold comps {fmt(s['min'])} · {fmt(s['max'])} — median ≈ {fmt(s['median'])} "
            f"(n={s['n']}{flag_txt})\n")
@@ -360,7 +360,7 @@ def main():
                 s["verification"] = verification
                 s["flags"] = (s.get("flags") or []) + [
                     f"{dropped} anchor comp(s) did not confirm as sold "
-                    f"and were removed from these stats"]
+                    f"and were removed; remaining stats unverified"]
                 summaries[-1] = s
                 print(f"  dropped {dropped} failed anchor(s); "
                       f"stats recomputed (n={s['n']})")
