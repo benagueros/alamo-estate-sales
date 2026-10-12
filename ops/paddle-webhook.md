@@ -22,7 +22,8 @@ grounds as Stripe.
    with a $5/month recurring price. Copy the price ID (`pri_...`).
 2. **Worker**: Cloudflare dashboard → Workers & Pages → Create →
    Create Worker → name it `alamo-paddle-webhook` → Deploy → Edit code →
-   paste `worker.js` below → Save and deploy.
+   paste the `worker.js` you copied from `ops/worker.js` in the repo →
+   Save and deploy.
 3. **Worker variables**: worker → Settings → Variables and Secrets → Add:
    - `PADDLE_WEBHOOK_SECRET` = the secret from step 4 (encrypt it)
    - `PADDLE_API_KEY` = Paddle API key (encrypt it)
@@ -31,8 +32,8 @@ grounds as Stripe.
 4. **Paddle → notifications**: Developer tools → Notifications → New
    destination. URL = your worker's URL
    (`https://alamo-paddle-webhook.<your-subdomain>.workers.dev` — shown on
-   the worker's page). Subscribe to `subscription.created`,
-   `subscription.activated`, `subscription.updated`, `subscription.canceled`.
+   the worker's page). Subscribe to `subscription.activated`,
+   `subscription.resumed`, `subscription.updated`, `subscription.canceled`.
    Copy the signing secret (`pdl_ntfset_…`) into the worker variable.
 5. **Paddle → API key**: Developer tools → API keys → create one → into the
    worker variable. (The webhook looks up the buyer's email via the Paddle

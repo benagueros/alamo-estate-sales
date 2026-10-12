@@ -241,7 +241,7 @@ def slugify(query):
     return re.sub(r"[^a-z0-9]+", "-", query.strip().lower()).strip("-")[:40]
 
 
-def to_find(item, sale):
+def to_find(item, sale, max_photos):
     find = {
         "id": slugify(item["query"]),
         "query": item["query"],
@@ -253,11 +253,12 @@ def to_find(item, sale):
         "source": "vision",
     }
     if item.get("photo_index"):
-        # Validate against the sale's actual photo count. A model-hallucinated
-        # index (e.g. 9 of 4) is dropped here so issue.py falls back to the
-        # cover photo — safer than clamping to an arbitrary wrong photo.
-        n_photos = len(sale.get("photo_urls") or [])
-        if 1 <= item["photo_index"] <= n_photos:
+        # Validate against the photos the model actually saw (first
+        # max_photos), not the sale's full gallery. A model-hallucinated
+        # index is dropped here so issue.py falls back to the cover photo
+        # — safer than clamping to an arbitrary wrong photo.
+        n_seen = min(len(sale.get("photo_urls") or []), max_photos)
+        if 1 <= item["photo_index"] <= n_seen:
             find["photo_index"] = item["photo_index"]
     return find
 
@@ -408,7 +409,7 @@ def main():
             if working:
                 print(f"  vision model: {working}")
             for item in parse_items(resp):
-                vision_finds.append(to_find(item, sale))
+                vision_finds.append(to_find(item, sale, max_photos))
             for q, ph in parse_watchlist(resp, watchlist).items():
                 if ph:
                     watchlist_photos[(sale.get("id"), q)] = ph

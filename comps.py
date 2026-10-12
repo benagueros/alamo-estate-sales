@@ -289,6 +289,10 @@ def main():
             out_dir = rest[i + 1]
         if a == "--verify-cap" and i + 1 < len(rest):
             verify_cap = int(rest[i + 1])
+    # Anchors are at most 3 per find and every published anchor must be
+    # checked (hard rule) — the cap can limit per-find spend but must never
+    # silently truncate the anchor list.
+    verify_cap = max(verify_cap, 3)
     verify = "--verify" in rest
 
     api_key = os.environ.get("TRAWL_API_KEY")

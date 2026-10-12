@@ -109,18 +109,19 @@ async function ensureSubscribed(email, key) {
 export default {
   async fetch(req, env) {
     const raw = await req.text();
-    if (!(await verify(raw, req.headers, env.PADDLE_WEBHOOK_SECRET)))
+    if (!(await verify(raw, req.headers, env.PADDLE_WEBHOOK_SECRET))
       return new Response("bad signature", { status: 401 });
     const evt = JSON.parse(raw);
     const type = evt.event_type ?? "";
     const customerId = evt.data?.customer_id;
     if (!customerId) return Response.json({ skipped: "no customer_id" });
 
-    // Grant access only on activation: subscription.created can fire for
-    // subscriptions that never complete payment. A failure here must NOT
-    // return 200: Paddle only retries on 5xx, and a 200 would silently
-    // drop a paying subscriber.
-    if (type === "subscription.activated") {
+    // Grant access on activation or resume: subscription.created can fire
+    // for subscriptions that never complete payment, but a resumed
+    // (previously paused) subscription is a paying subscriber again.
+    // A failure here must NOT return 200: Paddle only retries on 5xx,
+    // and a 200 would silently drop a paying subscriber.
+    if (type === "subscription.activated" || type === "subscription.resumed") {
       try {
         const email = await customerEmail(customerId, env);
         await ensureSubscribed(email, env.BUTTONDOWN_API_KEY);
