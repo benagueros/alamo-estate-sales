@@ -241,7 +241,7 @@ def slugify(query):
     return re.sub(r"[^a-z0-9]+", "-", query.strip().lower()).strip("-")[:40]
 
 
-def to_find(item, sale, max_photos):
+def to_find(item, sale, max_photos=MAX_PHOTOS):
     find = {
         "id": slugify(item["query"]),
         "query": item["query"],
@@ -312,6 +312,9 @@ def main():
             max_finds = int(rest[i + 1])
         if a == "--max-photos" and i + 1 < len(rest):
             max_photos = int(rest[i + 1])
+    # The model is sent photo_urls[:max_photos]; a 0/negative value would
+    # send no photos and make every photo_index invalid. Floor at 1.
+    max_photos = max(1, max_photos)
 
     sales = json.load(open(sales_path))
     keyword_finds = json.load(open(merge_path)) if merge_path else []

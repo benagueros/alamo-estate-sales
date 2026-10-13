@@ -190,6 +190,21 @@ def build(sales, finds, brief, date_str):
         pretty = datetime.date.fromisoformat(date_str).strftime("%A, %B %-d, %Y")
     except ValueError:
         pretty = date_str
+    # Footer honesty: the standard intro/methodology claim "real eBay sold
+    # comps" is only true if at least one find has a verified comp. If
+    # every find withheld stats (0 confirmed), say so instead of claiming
+    # sold-listing comps the issue doesn't have.
+    any_verified = any(
+        (s.get("verification") or {}).get("passed")
+        for s in brief.get("summaries", []))
+    intro = INTRO if any_verified else (
+        "Finds from this week's San Antonio-area estate sales. "
+        "No verified eBay sold comps were available for these finds today — "
+        "stats are withheld rather than published unverified.")
+    methodology = METHODOLOGY if any_verified else (
+        "No verified sold-listing comps were available for this issue. "
+        "Photos belong to their estate-sale companies, linked from the "
+        "original listings.")
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -221,11 +236,11 @@ footer{{font-family:system-ui,sans-serif;font-size:12px;color:#888;border-top:1p
 <p class="tagline">Every find, every comp, every morning.</p>
 <p class="issue">{html.escape(pretty)} · General edition · $5/mo</p>
 </header>
-<p><em>{INTRO}</em></p>
+<p><em>{intro}</em></p>
 {''.join(cards) if cards else '<p>No finds cleared the bar today — see you tomorrow.</p>'}
 <footer>
 <p><strong>Alamo Estate Deals</strong> — $5/month. Every find, every comp, every morning.</p>
-<p>{METHODOLOGY}</p>
+<p>{methodology}</p>
 </footer>
 </div></body></html>"""
 

@@ -57,7 +57,8 @@ Do NOT use any saved, cached, or previously-downloaded copy of the worker —
 it is updated in the repo (resubscribe handling, retry semantics, and
 idempotency have all changed since earlier versions), and a stale paste
 will silently deploy old behavior. When in doubt, re-copy from
-`ops/worker.js` on main.
+`ops/worker.js` on main. **Re-copy after ANY change to `ops/worker.js`** —
+the deployed worker does not auto-update from the repo.
 
 ## Sandbox testing (recommended first)
 

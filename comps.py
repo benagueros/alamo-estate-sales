@@ -290,9 +290,13 @@ def main():
         if a == "--verify-cap" and i + 1 < len(rest):
             verify_cap = int(rest[i + 1])
     # Anchors are at most 3 per find and every published anchor must be
-    # checked (hard rule) — the cap can limit per-find spend but must never
-    # silently truncate the anchor list.
-    verify_cap = max(verify_cap, 3)
+    # checked (hard rule). The cap slices per-find anchors, so the floor
+    # guarantees no truncation: a lower value would silently leave anchors
+    # unchecked. Log the clamp so it's visible, not silent.
+    if verify_cap < 3:
+        print(f"verify_cap {verify_cap} below minimum 3 — clamped "
+              f"(per-find anchors must all be checked)")
+        verify_cap = 3
     verify = "--verify" in rest
 
     api_key = os.environ.get("TRAWL_API_KEY")
@@ -352,6 +356,20 @@ def main():
             s["verification"] = verification
             npass = len(verification["passed"])
             print(f"  verification: {npass}/{len(anchors)} anchors confirmed")
+            if npass == 0:
+                # Hard rule: zero confirmed anchors means no verified comps
+                # at all for this find. Withhold stats/thresholds entirely
+                # — the find drops to the n=0 path. A writer note alone is
+                # not enough: if the note is missed, unverified stats publish.
+                # (1+ confirmed keeps recomputed stats + disclosure.)
+                s = {"id": find["id"], "query": find["query"], "n": 0,
+                     "comps": [], "verification": verification,
+                     "flags": [f"0/{len(anchors)} anchors confirmed as sold — "
+                               f"stats withheld (writer: do not publish "
+                               f"without confirmed comps)"]}
+                summaries[-1] = s
+                print("  0 anchors confirmed — stats withheld (n=0)")
+                continue
             # Hard rule: a failed anchor is a known-bad comp — drop it from
             # the published stats and links, then recompute. (The writer
             # note below still tells Ben what was removed.)
