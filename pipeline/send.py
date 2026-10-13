@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 """Publish a draft issue to Buttondown as a DRAFT email.
 
-Ben reviews the draft in the Buttondown dashboard and hits send himself —
-the human gate stays in front of every issue. (One-click upgrade path:
-POST /v1/emails/{id}/send after creation; see Buttondown docs.)
+Two callers:
+- "Send issue" (manual): Ben runs it for a draft file, reviews the
+  Buttondown draft, and hits send himself.
+- "Build daily issue" (automatic): creates the draft right after assembly
+  so the auto-send workflow can publish it after a review window. Pass
+  --manifest <path> to record the draft's email ID + creation time for
+  the auto-send workflow to pick up.
+
+Ben's controls on an auto draft: edit it in the Buttondown dashboard
+(auto-send ships the edited version), or delete it (auto-send treats a
+404 as cancelled and skips). Nothing auto-sends a 0-verified draft.
 
 Usage:
     BUTTONDOWN_API_KEY=... python3 send.py drafts/2026-10-05.html
+    BUTTONDOWN_API_KEY=... python3 send.py drafts/2026-10-05.html --manifest drafts/manifest.json
 
 API: POST https://api.buttondown.com/v1/emails
 Auth: Authorization: Token $BUTTONDOWN_API_KEY
@@ -18,6 +27,7 @@ Paddle webhook (Cloudflare Worker, ops/worker.js) adds buyers as
 subscribers via the API. If Buttondown-native paid tiers are ever used
 instead, switch this to "premium".
 """
+import datetime
 import json
 import os
 import re
@@ -48,6 +58,11 @@ def main():
         print("BUTTONDOWN_API_KEY env var is required (GitHub secret on Actions).")
         return 2
     path = sys.argv[1]
+    manifest_path = None
+    if "--manifest" in sys.argv:
+        i = sys.argv.index("--manifest")
+        if i + 1 < len(sys.argv):
+            manifest_path = sys.argv[i + 1]
     body = open(path).read()
     # Tell Buttondown the body is already rich HTML (fancy mode).
     payload = {
@@ -72,6 +87,20 @@ def main():
         return 1
     print(f"Draft created: {data.get('id')} — review and send it from the "
           f"Buttondown dashboard: https://buttondown.com/emails")
+    if manifest_path:
+        # The auto-send workflow reads this to find today's draft.
+        # verified_finds / sent are filled in by the caller (build-issue)
+        # and by auto_send.py; send.py only records what it knows.
+        manifest = {
+            "email_id": data.get("id"),
+            "created_at": datetime.datetime.now(
+                datetime.timezone.utc).isoformat(),
+            "draft_file": path,
+            "subject": payload["subject"],
+            "sent": False,
+        }
+        json.dump(manifest, open(manifest_path, "w"), indent=2)
+        print(f"Manifest written: {manifest_path}")
     return 0
 
 

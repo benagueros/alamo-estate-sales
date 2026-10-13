@@ -1,0 +1,62 @@
+# Auto-send — Alamo Estate Deals
+#
+# Publishes today's Buttondown draft after a review window, so the letter
+# goes out without Ben's input but he always has time to adjust.
+#
+# How it works:
+# - "Build daily issue" creates a Buttondown draft + writes
+#   drafts/manifest.json (email_id, created_at, verified_finds, sent).
+# - This workflow polls hourly. It sends only when ALL hold (see
+#   pipeline/auto_send.py): the draft is still a draft in Buttondown,
+#   it is at least 4 hours old (Ben's adjustment window), it is less than
+#   24h old (no stale drafts), and verified_finds >= 1 (hard rule: never
+#   auto-send a 0-verified draft).
+# - Ben's controls: edit the draft in Buttondown (auto-send ships his
+#   edit); delete the draft in Buttondown (auto-send treats the 404 as
+#   cancelled and skips). If the draft is too fresh, this run skips and a
+#   later hourly run sends it.
+# - If verified_finds == 0, this draft NEVER auto-sends; Ben decides
+#   manually (the manual "Send issue" workflow still exists as fallback).
+#
+# Ben adds this file via the GitHub web UI (the GitHub integration cannot
+# push .github/workflows/** files).
+#
+# Required repo secret: BUTTONDOWN_API_KEY.
+
+name: Auto-send issue
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # hourly; auto_send.py no-ops when nothing is due
+  workflow_dispatch:
+
+# The manifest-update step pushes back to the repo.
+permissions:
+  contents: write
+
+jobs:
+  auto-send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Send today's draft if due
+        env:
+          BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
+        run: python3 pipeline/auto_send.py drafts/manifest.json
+
+      - name: Commit manifest update
+        # Records sent/cancelled so later runs skip this draft. Best-effort:
+        # Buttondown's email status is the source of truth, so a failed
+        # commit can't cause a double-send (the next run re-checks it).
+        run: |
+          git config user.name "alamo-bot"
+          git config user.email "alamo-bot@users.noreply.github.com"
+          git add drafts/manifest.json
+          git diff --cached --quiet || git commit -m "auto-send: manifest update"
+          git push || echo "manifest push failed (non-fatal)"

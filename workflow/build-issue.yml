@@ -1,15 +1,16 @@
 # Build daily issue — Alamo Estate Deals
 #
 # Runs every morning: scrape SA listings -> identify candidates ->
-# trawl.dev sold comps -> assemble the draft issue -> commit it.
-# Nothing sends automatically. Ben reviews the draft, then runs the
-# "Send issue" workflow (manual dispatch) which publishes it to Buttondown
-# as a draft for final review + send.
+# trawl.dev sold comps -> assemble the draft issue -> commit it ->
+# create a Buttondown DRAFT (not sent) for Ben's review.
+# The "Auto-send" workflow publishes the draft after a review window
+# (see workflow/auto-send.yml). Ben can edit the Buttondown draft
+# (auto-send ships his edit) or delete it (auto-send skips).
 #
 # Ben adds this file via the GitHub web UI (the GitHub integration cannot
 # push .github/workflows/** files).
 #
-# Required repo secrets: TRAWL_API_KEY.
+# Required repo secrets: TRAWL_API_KEY, BUTTONDOWN_API_KEY.
 # Repo files: pipeline/*.py, comps.py (trawl's API is not reliably reachable
 # from the Hatch VM, so comps run here on Actions, not on the VM).
 
@@ -107,6 +108,29 @@ jobs:
 
       - name: Assemble issue draft
         run: python3 pipeline/issue.py sales.json finds.json out/comp-brief.json
+
+      - name: Create Buttondown draft
+        # The draft goes to Buttondown immediately so Ben can review/edit
+        # it in the dashboard. The "Auto-send" workflow publishes it after
+        # a review window (see workflow/auto-send.yml) — nothing sends here.
+        env:
+          BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
+        run: |
+          python3 pipeline/send.py "drafts/$(date +%F).html" --manifest drafts/manifest.json
+          python3 - <<'EOF'
+          import json
+          # Attach the verified-find count so auto-send knows whether this
+          # draft is eligible (hard rule: never auto-send 0-verified).
+          brief = json.load(open("out/comp-brief.json"))
+          verified = sum(1 for s in brief.get("summaries", [])
+                         if (s.get("verification") or {}).get("passed"))
+          manifest = json.load(open("drafts/manifest.json"))
+          manifest["verified_finds"] = verified
+          manifest["total_finds"] = len(brief.get("summaries", []))
+          json.dump(manifest, open("drafts/manifest.json", "w"), indent=2)
+          print(f"draft {manifest['email_id']}: "
+                f"{verified}/{manifest['total_finds']} finds verified")
+          EOF
 
       - name: Commit draft
         run: |
