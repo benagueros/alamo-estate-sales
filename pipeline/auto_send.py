@@ -110,12 +110,19 @@ def main():
         print(f"Buttondown GET /emails/{email_id} returned {status} — "
               f"retrying next hour.")
         return 1
-    if email.get("status") != "draft":
+    if email.get("status") == "sent":
         # Already sent (e.g. Ben sent it manually) — record and move on.
         manifest["sent"] = True
         json.dump(manifest, open(manifest_path, "w"), indent=2)
-        print(f"Draft {email_id} already {email.get('status')} — "
-              f"marked sent. Nothing to do.")
+        print(f"Draft {email_id} already sent — marked sent. Nothing to do.")
+        return 0
+    if email.get("status") != "draft":
+        # Transitional (sending/scheduled) or unrecognized — neither a
+        # terminal "sent" nor a sendable "draft". Don't mark it sent (that
+        # would orphan a failed send) and don't try to send (it's already
+        # in flight); re-check next hour.
+        print(f"Draft {email_id} status is {email.get('status')!r} — "
+              f"not sending, re-checking next hour.")
         return 0
 
     # All gates pass — send Ben's version (including any edits he made).

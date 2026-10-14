@@ -113,10 +113,12 @@ jobs:
         # The draft goes to Buttondown immediately so Ben can review/edit
         # it in the dashboard. The "Auto-send" workflow publishes it after
         # a review window (see workflow/auto-send.yml) — nothing sends here.
+        # Manifest is per-date so a re-run never clobbers an earlier draft's
+        # tracking.
         env:
           BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
         run: |
-          python3 pipeline/send.py "drafts/$(date +%F).html" --manifest drafts/manifest.json
+          python3 pipeline/send.py "drafts/$(date +%F).html" --manifest "drafts/manifest-$(date +%F).json"
           python3 - <<'EOF'
           import json
           # Attach the verified-find count so auto-send knows whether this
@@ -124,10 +126,12 @@ jobs:
           brief = json.load(open("out/comp-brief.json"))
           verified = sum(1 for s in brief.get("summaries", [])
                          if (s.get("verification") or {}).get("passed"))
-          manifest = json.load(open("drafts/manifest.json"))
+          import datetime
+          manifest_path = f"drafts/manifest-{datetime.date.today().isoformat()}.json"
+          manifest = json.load(open(manifest_path))
           manifest["verified_finds"] = verified
           manifest["total_finds"] = len(brief.get("summaries", []))
-          json.dump(manifest, open("drafts/manifest.json", "w"), indent=2)
+          json.dump(manifest, open(manifest_path, "w"), indent=2)
           print(f"draft {manifest['email_id']}: "
                 f"{verified}/{manifest['total_finds']} finds verified")
           EOF

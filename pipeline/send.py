@@ -64,10 +64,17 @@ def main():
         if i + 1 < len(sys.argv):
             manifest_path = sys.argv[i + 1]
     body = open(path).read()
+    # Strip writer-facing scaffolding before the draft reaches Buttondown.
+    # The repo's drafts/*.html keeps the notes (for Ben's file review), but
+    # subscribers must never see "(writer: ...)" — and the auto-send path
+    # ships the draft unedited. Data caveats in <em> flags (thin datasets,
+    # unverified stats) stay: they're honest context, not scaffolding.
+    send_body = re.sub(r'<span class="writer-note">.*?</span>', "",
+                       body, flags=re.DOTALL)
     # Tell Buttondown the body is already rich HTML (fancy mode).
     payload = {
         "subject": subject_for(path),
-        "body": "<!-- buttondown-editor-mode: fancy -->\n" + body,
+        "body": "<!-- buttondown-editor-mode: fancy -->\n" + send_body,
         "email_type": "public",
         "status": "draft",
     }

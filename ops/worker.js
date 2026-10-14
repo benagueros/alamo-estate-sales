@@ -116,17 +116,16 @@ export default {
     const customerId = evt.data?.customer_id;
     if (!customerId) return Response.json({ skipped: "no customer_id" });
 
-    // Grant access on activation, or on resume with an active status: a
-    // resumed (previously paused) subscription is a paying subscriber
-    // again. The status check guards against granting on a resumed-but-
-    // not-active payload (e.g. past_due); a missing status falls back to
-    // the event type itself. subscription.created is intentionally NOT
+    // Grant access on activation, or on resume with an explicitly active
+    // status: a resumed (previously paused) subscription is a paying
+    // subscriber again. Requiring explicit "active" (not a missing-status
+    // fallback) is the conservative direction — Paddle always includes the
+    // status field on this event. subscription.created is intentionally NOT
     // handled — it can fire for subscriptions that never complete payment.
     // A failure here must NOT return 200: Paddle only retries on 5xx,
     // and a 200 would silently drop a paying subscriber.
-    const status = evt.data?.status;
     const resumedActive = type === "subscription.resumed" &&
-      (!status || status === "active");
+      evt.data?.status === "active";
     if (type === "subscription.activated" || resumedActive) {
       try {
         const email = await customerEmail(customerId, env);

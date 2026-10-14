@@ -242,6 +242,10 @@ def slugify(query):
 
 
 def to_find(item, sale, max_photos=MAX_PHOTOS):
+    # Floor here (not just in main()) so direct callers can't bypass it:
+    # the model is sent photo_urls[:max_photos], and a 0/negative value
+    # would make every photo_index invalid.
+    max_photos = max(1, max_photos)
     find = {
         "id": slugify(item["query"]),
         "query": item["query"],
