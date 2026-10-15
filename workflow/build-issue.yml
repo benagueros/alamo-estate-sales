@@ -118,7 +118,13 @@ jobs:
         env:
           BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
         run: |
-          python3 pipeline/send.py "drafts/$(date +%F).html" --manifest "drafts/manifest-$(date +%F).json"
+          MANIFEST="drafts/manifest-$(date +%F).json"
+          if [ -f "$MANIFEST" ]; then
+            # Same-date re-run: back up the earlier manifest so its draft ID
+            # isn't lost (the earlier Buttondown draft still exists).
+            mv "$MANIFEST" "drafts/manifest-$(date +%F-%H%M).json"
+          fi
+          python3 pipeline/send.py "drafts/$(date +%F).html" --manifest "$MANIFEST"
           python3 - <<'EOF'
           import json
           # Attach the verified-find count so auto-send knows whether this

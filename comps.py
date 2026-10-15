@@ -365,8 +365,7 @@ def main():
                 s = {"id": find["id"], "query": find["query"], "n": 0,
                      "comps": [], "verification": verification,
                      "flags": [f"0/{len(anchors)} anchors confirmed as sold — "
-                               f"stats withheld (writer: do not publish "
-                               f"without confirmed comps)"]}
+                               f"stats withheld"]}
                 summaries[-1] = s
                 print("  0 anchors confirmed — stats withheld (n=0)")
                 continue

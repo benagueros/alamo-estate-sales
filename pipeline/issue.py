@@ -125,7 +125,8 @@ def find_card(find, sale, summary, budget_skipped=False):
             comps_line += f"<br>{vline}"
         elif not comp.get("error"):
             comps_line += ("<br>Sold-state check: not run "
-                           "<em>(writer: treat comps as unconfirmed)</em>")
+                           '<span class="writer-note">(writer: treat comps '
+                           "as unconfirmed)</span>")
         links = sold_links_html(comp)
         if links:
             comps_line += f'<br><span class="soldlinks">Sold listings: {links}</span>'
