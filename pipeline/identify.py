@@ -96,8 +96,11 @@ def extract(sales, max_finds=4):
                 continue
             seen_queries.add(query)
             candidates.append({
-                "id": re.sub(r"[^a-z0-9]+", "-",
-                             query.strip().lower()).strip("-")[:40],
+                # ID is unique per (sale, query): the same query at two
+                # sales must not collide, or comps/summaries keyed by ID
+                # would overwrite each other and misattribute sold comps.
+                "id": f"{sale.get('id')}-"
+                      f"{re.sub(r'[^a-z0-9]+', '-', query.strip().lower()).strip('-')[:40]}",
                 "query": query,
                 "sale_id": sale.get("id"),
                 "sale_title": sale.get("title"),

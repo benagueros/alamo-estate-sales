@@ -122,7 +122,9 @@ jobs:
           if [ -f "$MANIFEST" ]; then
             # Same-date re-run: back up the earlier manifest so its draft ID
             # isn't lost (the earlier Buttondown draft still exists).
-            mv "$MANIFEST" "drafts/manifest-$(date +%F-%H%M).json"
+            # Seconds resolution: two re-runs in the same minute are rare,
+            # and the backup is best-effort record-keeping anyway.
+            mv "$MANIFEST" "drafts/manifest-$(date +%F-%H%M%S).json"
           fi
           python3 pipeline/send.py "drafts/$(date +%F).html" --manifest "$MANIFEST"
           python3 - <<'EOF'

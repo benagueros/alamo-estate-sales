@@ -70,10 +70,11 @@ def main():
     # ships the draft unedited. Data caveats in <em> flags (thin datasets,
     # unverified stats) stay: they're honest context, not scaffolding.
     # Two passes: markup spans first, then any bare "(writer: ...)" text
-    # that rides inside other elements (e.g. <em> caveats).
+    # that rides inside other elements (e.g. <em> caveats). The text pattern
+    # tolerates one level of nested parentheses.
     send_body = re.sub(r'<span class="writer-note">.*?</span>', "",
                        body, flags=re.DOTALL)
-    send_body = re.sub(r"\(writer:[^)]*\)", "", send_body)
+    send_body = re.sub(r"\(writer:(?:[^()]*|\([^()]*\))*\)", "", send_body)
     # Tell Buttondown the body is already rich HTML (fancy mode).
     payload = {
         "subject": subject_for(path),

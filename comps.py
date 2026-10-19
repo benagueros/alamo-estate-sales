@@ -248,7 +248,7 @@ def brief_line(s):
             out += f"({' ; '.join(s['flags'])})\n"
         return out
     flag_txt = f" ({'; '.join(s['flags'])})" if s["flags"] else ""
-    fmt = lambda v: f"${v:,.0f}"
+    fmt = lambda v: f"${v:,.0f}" if isinstance(v, (int, float)) else "?"
     # Suggested starting points for the writer; the published threshold stays
     # an editorial call, never an automated number.
     strong = max(1, round(s["median"] * 0.85, -1))
@@ -264,7 +264,8 @@ def brief_line(s):
         failed = v.get("failed", [])
         if failed:
             desc = ", ".join(
-                f"{fmt(f['sale_price'])} ({f['note']})" for f in failed)
+                f"{fmt(f.get('sale_price'))} ({f.get('note', '?')})"
+                for f in failed)
             out += (f" — FAILED: {desc}. "
                     f"(writer: these did NOT confirm as sold; "
                     f"cut or replace before publishing)")

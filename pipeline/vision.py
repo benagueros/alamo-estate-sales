@@ -219,8 +219,13 @@ def parse_items(resp):
     return out[:4]
 
 
-def parse_watchlist(resp, queries):
-    """{query: photo_index or None} for the watchlist. Never raises."""
+def parse_watchlist(resp, queries, n_seen=None):
+    """{query: photo_index or None} for the watchlist. Never raises.
+
+    n_seen: number of photos the model was shown; indices above it are
+    dropped (the model may hallucinate). If None, only the lower bound
+    (>= 1) is enforced.
+    """
     try:
         text = resp["candidates"][0]["content"]["parts"][0]["text"]
         wl = json.loads(text).get("watchlist", {})
@@ -231,7 +236,10 @@ def parse_watchlist(resp, queries):
         ph = wl.get(q) if isinstance(wl, dict) else None
         try:
             ph = int(ph)
-            out[q] = ph if ph >= 1 else None
+            if ph >= 1 and (n_seen is None or ph <= n_seen):
+                out[q] = ph
+            else:
+                out[q] = None
         except (TypeError, ValueError):
             out[q] = None
     return out
@@ -241,13 +249,20 @@ def slugify(query):
     return re.sub(r"[^a-z0-9]+", "-", query.strip().lower()).strip("-")[:40]
 
 
-def to_find(item, sale, max_photos=MAX_PHOTOS):
+def to_find(item, sale, max_photos=MAX_PHOTOS, downloaded_indices=None):
     # Floor here (not just in main()) so direct callers can't bypass it:
     # the model is sent photo_urls[:max_photos], and a 0/negative value
     # would make every photo_index invalid.
     max_photos = max(1, max_photos)
+    # downloaded_indices: original 0-based positions of the photos the
+    # model actually saw (some downloads may have failed, so the model's
+    # 1..N numbering may not match the original list positions).
+    if downloaded_indices is None:
+        downloaded_indices = list(range(min(len(sale.get("photo_urls") or []),
+                                            max_photos)))
     find = {
-        "id": slugify(item["query"]),
+        # ID is unique per (sale, query) — see identify.py for why.
+        "id": f"{sale.get('id')}-{slugify(item['query'])}",
         "query": item["query"],
         "sale_id": sale.get("id"),
         "sale_title": sale.get("title"),
@@ -257,13 +272,17 @@ def to_find(item, sale, max_photos=MAX_PHOTOS):
         "source": "vision",
     }
     if item.get("photo_index"):
-        # Validate against the photos the model actually saw (first
-        # max_photos), not the sale's full gallery. A model-hallucinated
-        # index is dropped here so issue.py falls back to the cover photo
-        # — safer than clamping to an arbitrary wrong photo.
-        n_seen = min(len(sale.get("photo_urls") or []), max_photos)
-        if 1 <= item["photo_index"] <= n_seen:
-            find["photo_index"] = item["photo_index"]
+        # Validate against the photos the model actually saw, then remap
+        # the model's 1-based subset index to a 1-based index into the
+        # original photo_urls (issue.py indexes the original list). A
+        # model-hallucinated index is dropped here so issue.py falls back
+        # to the cover photo — safer than clamping to a wrong photo.
+        try:
+            model_idx = int(item["photo_index"])
+        except (TypeError, ValueError):
+            model_idx = 0
+        if 1 <= model_idx <= len(downloaded_indices):
+            find["photo_index"] = downloaded_indices[model_idx - 1] + 1
     return find
 
 
@@ -338,10 +357,12 @@ def main():
             if quota_dead:
                 break
             images = []
-            for u in (sale.get("photo_urls") or [])[:max_photos]:
+            downloaded_indices = []  # original 0-based positions
+            for i, u in enumerate((sale.get("photo_urls") or [])[:max_photos]):
                 img = download_image(u)
                 if img:
                     images.append(img)
+                    downloaded_indices.append(i)
             if not images:
                 continue
             watchlist = kw_by_sale.get(sale.get("id"), [])
@@ -416,10 +437,14 @@ def main():
             if working:
                 print(f"  vision model: {working}")
             for item in parse_items(resp):
-                vision_finds.append(to_find(item, sale, max_photos))
-            for q, ph in parse_watchlist(resp, watchlist).items():
+                vision_finds.append(to_find(item, sale, max_photos,
+                                            downloaded_indices))
+            for q, ph in parse_watchlist(resp, watchlist,
+                                         len(downloaded_indices)).items():
                 if ph:
-                    watchlist_photos[(sale.get("id"), q)] = ph
+                    # Remap model's subset index to original photo_urls index.
+                    watchlist_photos[(sale.get("id"), q)] = (
+                        downloaded_indices[ph - 1] + 1)
             print(f"  {sale.get('id')}: vision found "
                   f"{len([f for f in vision_finds if f['sale_id'] == sale.get('id')])} item(s)")
             time.sleep(REQUEST_SLEEP)
