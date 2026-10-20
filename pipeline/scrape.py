@@ -179,9 +179,10 @@ def main():
             # in the page state — grab it for the "browse the lots" link.
             # (Their lot pages sit behind Incapsula, so we link out rather
             # than scrape estimates.)
-            # auctionUrl may be JSON-escaped (https:\/\/...); capture raw then
-            # unescape so the href isn't broken.
-            m = re.search(r'"auctionUrl":"((?:https?:)?[^"]+)"', page.content())
+            # auctionUrl may be JSON-escaped (https:\/\/...); match both plain
+            # and escaped forms, then unescape so the href isn't broken.
+            m = re.search(r'"auctionUrl":"(https?(?:://|:\\/\\/)[^"]+)"',
+                          page.content())
             s["auction_url"] = m.group(1).replace("\\/", "/") if m else ""
             photos = d["photos"] or ([s["thumb"]] if s.get("thumb") else [])
             s["photo_urls"] = [u for u in photos
