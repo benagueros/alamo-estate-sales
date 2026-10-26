@@ -3,14 +3,16 @@
 San Antonio estate-sale newsletter: every morning, scrape the week's SA
 listings, identify candidate finds, pull eBay **sold** comps via trawl.dev,
 assemble the issue in deal-threshold format, and stage it for send.
-$5/mo via Paddle, delivered via Buttondown. Nothing publishes without a
-human review.
+$5/mo via Paddle, delivered via Buttondown. Drafts auto-publish after a
+4-hour review window (0-verified drafts never auto-send); Ben can edit or
+delete a draft in Buttondown before it ships.
 
 ## How it runs (GitHub Actions)
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `build-issue.yml` | daily ~6am CDT + manual | scrape → identify → comps → draft HTML → commit to `drafts/` |
+| `build-issue.yml` | daily ~6am CDT + manual | scrape → identify → comps → draft HTML → commit to `drafts/` → create Buttondown draft + manifest |
+| `auto-send.yml` | hourly | publishes today's Buttondown draft if ≥4h old, <24h old, and ≥1 find verified |
 | `send-issue.yml` | manual dispatch | publishes a draft to Buttondown as a **draft email** — Ben reviews and hits send in the dashboard |
 | `comp-check.yml` | manual dispatch | one-off comp lookup for ad-hoc finds (the original tool) |
 

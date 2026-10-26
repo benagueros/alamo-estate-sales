@@ -117,7 +117,11 @@ def find_card(find, sale, summary, budget_skipped=False):
         if v.get("checked"):
             npass = len(v.get("passed", []))
             nfail = len(v.get("failed", []))
-            vline = f"Sold-state check: {npass}/{v['checked']} anchor comps confirmed"
+            # Standing disclosure: stats span the full sold dataset; only
+            # the anchors were /item-verified. Readers shouldn't infer every
+            # comp behind the median was individually checked.
+            vline = (f"Sold-state check: {npass}/{v['checked']} anchor comps "
+                     f"confirmed (stats span the sold dataset; anchors verified)")
             if nfail:
                 vline += (f' <span class="writer-note">(writer: {nfail} failed '
                           f'anchor(s) removed; remaining stats unverified — '

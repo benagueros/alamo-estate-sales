@@ -348,6 +348,17 @@ def main():
                 except Exception as exc:  # never crash the daily build
                     v = {"item_id": c.get("item_id"), "verified": False,
                          "note": f"verify error: {exc}"[:120]}
+                # Warn if /item reports a different price than the /sold
+                # anchor: published stats use the anchor price, but a drift
+                # (multi-quantity, relist) means it's stale in one direction.
+                item_price = v.get("sale_price")
+                anchor_price = c.get("sale_price")
+                if (v.get("verified") and isinstance(item_price, (int, float))
+                        and isinstance(anchor_price, (int, float))
+                        and item_price != anchor_price):
+                    print(f"  WARNING: {s['id']} anchor {c.get('item_id')}: "
+                          f"/sold price ${anchor_price:,.0f} vs /item "
+                          f"${item_price:,.0f} — published stats use /sold")
                 # Count every call against the budget, not just successes:
                 # undercounting risks blowing past the real free-tier cap.
                 total_credits += 1

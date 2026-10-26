@@ -196,8 +196,15 @@ def parse_items(resp):
         if not isinstance(it, dict):
             continue
         label = str(it.get("label", ""))[:160].strip()
-        query = re.sub(r"[^a-z0-9 ]+", "",
-                       str(it.get("query", "")).lower()).strip()
+        # Transliterate accents before stripping non-ASCII: "hermès" must
+        # become "hermes" (eBay titles say "hermes"), not "herms" (which
+        # matches nothing and silently kills the find).
+        import unicodedata
+        raw_query = str(it.get("query", "")).lower()
+        raw_query = unicodedata.normalize("NFKD", raw_query)
+        raw_query = "".join(c for c in raw_query
+                            if not unicodedata.combining(c))
+        query = re.sub(r"[^a-z0-9 ]+", "", raw_query).strip()
         query = re.sub(r"\s+", " ", query)
         if not label or len(query.split()) < 2:
             continue
@@ -303,21 +310,46 @@ def drop_subsumed(finds):
 
 
 def merge_finds(keyword_finds, vision_finds, max_finds=4):
-    """Vision outranks keyword; vaguer same-sale queries are dropped."""
-    cands = drop_subsumed(list(keyword_finds) + list(vision_finds))
+    """Vision outranks keyword; vaguer same-sale queries are dropped.
+
+    Subsumption runs AFTER the top-N cut: dropping first could lose a
+    keyword find whose subsuming vision find then falls outside the cut.
+    After cutting, subsumed finds are dropped and gaps are backfilled from
+    the next-ranked candidates.
+    """
+    cands = list(keyword_finds) + list(vision_finds)
     ranked = sorted(
         ((f.get("weight", 0), 0 if f.get("source") == "vision" else 1, f)
          for f in cands),
         key=lambda t: (-t[0], t[1]),
     )
-    out, seen = [], set()
+    # Dedup by (sale_id, query), keeping the highest-ranked.
+    deduped = []
+    seen = set()
     for _, _, f in ranked:
         key = (f.get("sale_id"), f["query"])
-        if key in seen or len(out) >= max_finds:
+        if key in seen:
             continue
         seen.add(key)
-        out.append(f)
-    return out
+        deduped.append(f)
+    # Cut to top-N, then drop subsumed within the cut, then backfill.
+    top = deduped[:max_finds]
+    kept = drop_subsumed(top)
+    kept_keys = {(f.get("sale_id"), f["query"]) for f in kept}
+    for f in deduped[max_finds:]:
+        if len(kept) >= max_finds:
+            break
+        key = (f.get("sale_id"), f["query"])
+        if key in kept_keys:
+            continue
+        # Skip if subsumed by a kept find.
+        ft = set(f["query"].split())
+        if any(set(g["query"].split()) > ft for g in kept
+               if g.get("sale_id") == f.get("sale_id")):
+            continue
+        kept.append(f)
+        kept_keys.add(key)
+    return kept
 
 
 def main():
@@ -368,8 +400,11 @@ def main():
             watchlist = kw_by_sale.get(sale.get("id"), [])
             watchlist_block = (WATCHLIST_INSTRUCTIONS.format(
                 watchlist_json=json.dumps(watchlist)) if watchlist else "")
+            # Sanitize braces: a listing title containing {...} would crash
+            # str.format with KeyError and kill the whole vision run.
+            safe_title = (sale.get("title") or "")[:120].replace("{", "(").replace("}", ")")
             prompt = PROMPT_TEMPLATE.format(
-                n=len(images), title=(sale.get("title") or "")[:120],
+                n=len(images), title=safe_title,
                 watchlist_block=watchlist_block)
             resp, err, tried = None, None, []
             saw_429, saw_other_error = False, False

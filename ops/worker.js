@@ -78,8 +78,12 @@ async function buttondown(method, path, key, body) {
     return true;
   }
   // Unsubscribing someone who isn't on the list: desired end state already
-  // holds. (POST 404s still throw — that's a real config problem.)
-  if (method === "PATCH" && r.status === 404) {
+  // holds. But resubscribing (PATCH to "regular") must NOT swallow 404:
+  // if the record vanished between GET and PATCH, we'd report success while
+  // a paying customer stays unsubscribed. That case throws so the caller
+  // can re-POST.
+  if (method === "PATCH" && r.status === 404
+      && body?.type === "unsubscribed") {
     console.log(`buttondown ${path}: not found on unsubscribe, treating as success`);
     return true;
   }
@@ -101,7 +105,17 @@ async function ensureSubscribed(email, key) {
   if (sub.type !== "regular") {
     // Any inactive state (unsubscribed, unactivated, undelivered, …):
     // a paying subscriber must end up receiving the newsletter.
-    await buttondown("PATCH", `/subscribers/${id}`, key, { type: "regular" });
+    try {
+      await buttondown("PATCH", `/subscribers/${id}`, key, { type: "regular" });
+    } catch (e) {
+      // Record vanished between GET and PATCH (404): re-create it.
+      if (/404/.test(e.message)) {
+        await buttondown("POST", "/subscribers", key,
+          { email_address: email, type: "regular", tags: ["alamo-estate-sales"] });
+      } else {
+        throw e;
+      }
+    }
   }
   // already regular → nothing to do
 }
@@ -109,7 +123,7 @@ async function ensureSubscribed(email, key) {
 export default {
   async fetch(req, env) {
     const raw = await req.text();
-    if (!(await verify(raw, req.headers, env.PADDLE_WEBHOOK_SECRET))
+    if (!(await verify(raw, req.headers, env.PADDLE_WEBHOOK_SECRET)))
       return new Response("bad signature", { status: 401 });
     const evt = JSON.parse(raw);
     const type = evt.event_type ?? "";
@@ -134,8 +148,10 @@ export default {
         console.error("provision failed:", e.message);
         return new Response("subscriber provisioning failed", { status: 502 });
       }
-    } else if (type === "subscription.canceled") {
+    } else if (type === "subscription.canceled" || type === "subscription.paused") {
       // Stop future issues; keep them archived, not deleted.
+      // Paused = not billing, so same treatment as canceled. (updated /
+      // past_due deliberately stay subscribed — they may still pay.)
       // Same 5xx-on-failure rule: the cancel must eventually be processed.
       try {
         const email = await customerEmail(customerId, env);

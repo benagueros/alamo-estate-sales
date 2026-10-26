@@ -83,7 +83,7 @@ def discover(metro_url):
             addr = loc.get("address", {}) or {}
             org = it.get("organizer", {}) or {}
             images = it.get("image") or []
-            zip_code = addr.get("postalCode", "") or ""
+            zip_code = str(addr.get("postalCode", "") or "")
             if not zip_code:
                 # some listings omit the postal code — it's in the URL too
                 m2 = re.search(r"/TX/[^/]+/(\d{5})/", url)
@@ -127,6 +127,38 @@ def dates_text(start, end):
     except Exception:
         return ""
 
+
+
+def extract_auction_url(page_content):
+    """Pull the auctionUrl from a listing page's embedded JSON.
+
+    Handles plain (https://...), JSON-escaped (https://... (escaped)) and
+    protocol-relative (//host/...) forms; returns "" when absent or
+    unrecognized. Protocol-relative URLs are resolved to https.
+    """
+    key = '"auctionUrl":"'
+    i = page_content.find(key)
+    if i < 0:
+        return ""
+    i += len(key)
+    # Extract until the closing quote, respecting JSON backslash escapes.
+    chars = []
+    while i < len(page_content):
+        c = page_content[i]
+        if c == "\\" and i + 1 < len(page_content):
+            chars.append(page_content[i + 1])
+            i += 2
+        elif c == '"':
+            break
+        else:
+            chars.append(c)
+            i += 1
+    url = "".join(chars)
+    if url.startswith("//"):
+        url = "https:" + url
+    if not url.startswith(("http://", "https://")):
+        return ""
+    return url
 
 def main():
     out, metro_url, max_sales = "sales.json", METRO_URL, 25
@@ -179,11 +211,7 @@ def main():
             # in the page state — grab it for the "browse the lots" link.
             # (Their lot pages sit behind Incapsula, so we link out rather
             # than scrape estimates.)
-            # auctionUrl may be JSON-escaped (https:\/\/...); match both plain
-            # and escaped forms, then unescape so the href isn't broken.
-            m = re.search(r'"auctionUrl":"(https?(?:://|:\\/\\/)[^"]+)"',
-                          page.content())
-            s["auction_url"] = m.group(1).replace("\\/", "/") if m else ""
+            s["auction_url"] = extract_auction_url(page.content())
             photos = d["photos"] or ([s["thumb"]] if s.get("thumb") else [])
             s["photo_urls"] = [u for u in photos
                                if "placeholder" not in u and "logo" not in u][:12]
@@ -200,6 +228,15 @@ def main():
     sales = [s for s in sales if len(s.get("description", "")) > 40]
     json.dump(sales, open(out, "w"), indent=2)
     print(f"Wrote {out} ({len(sales)} sales)")
+    if not sales:
+        # Zero sales surviving the detail pass is almost certainly a
+        # scraper break (selector redesign), not a quiet day — fail loudly
+        # so the build doesn't silently commit a "no finds" draft.
+        print("WARNING: zero sales survived detail pass — "
+              "check DETAIL_JS selectors for a site redesign",
+              file=sys.stderr)
+        return 1
+    return 0
     return 0
 
 

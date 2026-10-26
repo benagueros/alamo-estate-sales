@@ -5,12 +5,13 @@ spends money except the $5 test subscription at the end (refundable).
 
 ## 1. GitHub repo
 - [x] Repo **`benagueros/alamo-estate-sales`** created; pipeline code pushed.
-- [x] Add the three workflow files **via the web UI** (the integration can't
+- [x] Add the four workflow files **via the web UI** (the integration can't
       push `.github/workflows/**` — same limitation as TripSplit):
       copy `workflow/build-issue.yml` → `.github/workflows/build-issue.yml`,
+      `workflow/auto-send.yml` → `.github/workflows/auto-send.yml`,
       `workflow/send-issue.yml` → `.github/workflows/send-issue.yml`,
       `workflow/comp-check.yml` → `.github/workflows/comp-check.yml`.
-      (Re-copy `build-issue.yml` after any change to `workflow/`.)
+      (Re-copy `build-issue.yml` and `auto-send.yml` after any change to `workflow/`.)
 
 ## 2. Secrets (repo Settings → Secrets and variables → Actions)
 - [x] `TRAWL_API_KEY` — your trawl.dev key (already in your vault; paste the

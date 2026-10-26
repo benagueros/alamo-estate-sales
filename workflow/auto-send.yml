@@ -5,7 +5,7 @@
 #
 # How it works:
 # - "Build daily issue" creates a Buttondown draft + writes
-#   drafts/manifest.json (email_id, created_at, verified_finds, sent).
+#   drafts/manifest-YYYY-MM-DD.json (email_id, created_at, verified_finds, sent).
 # - This workflow polls hourly. It sends only when ALL hold (see
 #   pipeline/auto_send.py): the draft is still a draft in Buttondown,
 #   it is at least 4 hours old (Ben's adjustment window), it is less than

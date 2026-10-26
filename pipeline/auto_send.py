@@ -86,6 +86,11 @@ def main():
     except (KeyError, ValueError):
         print(f"Manifest has no usable created_at — refusing to send.")
         return 1
+    # Normalize naive timestamps to UTC: aware-minus-naive raises TypeError
+    # at subtraction, which would otherwise stick the hourly workflow in a
+    # permanent exit-1 loop for this draft.
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=datetime.timezone.utc)
     now = datetime.datetime.now(datetime.timezone.utc)
     age_hours = (now - created).total_seconds() / 3600
     if age_hours < REVIEW_WINDOW_HOURS:
