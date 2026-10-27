@@ -337,8 +337,6 @@ def merge_finds(keyword_finds, vision_finds, max_finds=4):
     kept = drop_subsumed(top)
     kept_keys = {(f.get("sale_id"), f["query"]) for f in kept}
     for f in deduped[max_finds:]:
-        if len(kept) >= max_finds:
-            break
         key = (f.get("sale_id"), f["query"])
         if key in kept_keys:
             continue
@@ -347,8 +345,22 @@ def merge_finds(keyword_finds, vision_finds, max_finds=4):
         if any(set(g["query"].split()) > ft for g in kept
                if g.get("sale_id") == f.get("sale_id")):
             continue
-        kept.append(f)
-        kept_keys.add(key)
+        # Bidirectional: if this candidate subsumes kept finds (vague kept
+        # + specific backfill), drop the kept finds — otherwise both coexist
+        # and specificity is defeated. This can free a slot even when kept
+        # is full, so don't break on fullness before checking subsumption.
+        subsumed_kept = [g for g in kept
+                         if g.get("sale_id") == f.get("sale_id")
+                         and set(g["query"].split()) < ft]
+        if subsumed_kept:
+            kept = [g for g in kept if g not in subsumed_kept]
+            kept_keys = {(g.get("sale_id"), g["query"]) for g in kept}
+            kept.append(f)
+            kept_keys.add(key)
+        elif len(kept) < max_finds:
+            kept.append(f)
+            kept_keys.add(key)
+        # Else: kept is full and this candidate subsumes nothing — skip.
     return kept
 
 

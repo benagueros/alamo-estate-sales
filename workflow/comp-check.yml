@@ -44,10 +44,12 @@ jobs:
         # Comp-check runs are manual, but they spend real trawl credits —
         # without this step the monthly guard (state.json) would undercount
         # and the daily build could overshoot the 250 free cap. Same snippet
-        # as build-issue.yml.
+        # as build-issue.yml. Runs even if comp-fetch failed (if: always)
+        # so partial spend is still recorded; a missing brief is tolerated.
+        if: always()
         run: |
           python3 - <<'EOF'
-          import json, datetime
+          import json, datetime, os
           month = datetime.date.today().strftime("%Y-%m")
           try:
               state = json.load(open("state.json"))
@@ -55,17 +57,22 @@ jobs:
               state = {}
           if state.get("trawl_month") != month:
               state = {"trawl_month": month, "trawl_credits_used": 0}
-          brief = json.load(open("out/comp-brief.json"))
-          state["trawl_credits_used"] += brief.get("credits_charged", 0)
+          try:
+              brief = json.load(open("out/comp-brief.json"))
+              spent = brief.get("credits_charged", 0)
+          except (FileNotFoundError, json.JSONDecodeError):
+              spent = 0
+              print("no comp-brief found — recording 0 credits")
+          state["trawl_credits_used"] += spent
           json.dump(state, open("state.json", "w"), indent=2)
-          print(f"comp-check spent {brief.get('credits_charged', 0)} credits; "
+          print(f"comp-check spent {spent} credits; "
                 f"month total now: {state['trawl_credits_used']}")
           EOF
           git config user.name "alamo-bot"
           git config user.email "alamo-bot@users.noreply.github.com"
           git add state.json
           git diff --cached --quiet || git commit -m "comp-check: record trawl credits"
-          git push
+          git push || echo "state push failed (non-fatal; next run reconciles)"
 
       - name: Upload brief
         uses: actions/upload-artifact@v4
