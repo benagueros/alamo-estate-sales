@@ -45,35 +45,41 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Send today's draft if due
-        # Pick the most recently modified manifest, not just today's date:
-        # a draft built late in the day (UTC) would otherwise be missed by
-        # tomorrow's runs, since they only look at today's date. auto_send.py
-        # skips already-sent/cancelled drafts and enforces the 24h staleness
-        # cap, so picking an older manifest is safe.
+      - name: Send due drafts (oldest first, at most one)
+        # Loop manifests oldest-first (filename date, not checkout mtime —
+        # ls -t is unreliable in a fresh checkout where all files share a
+        # checkout timestamp). Send at most one per run: stop after the first
+        # successful send (exit 2). Older due drafts are not starved by newer
+        # ones — a still-due older draft sends before a newer one is tried.
         env:
           BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
         run: |
-          MANIFEST=$(ls -t drafts/manifest-*.json 2>/dev/null | head -1)
-          if [ -z "$MANIFEST" ]; then
-            echo "No manifest found — nothing to send."
-            exit 0
+          SENT=0
+          for MANIFEST in $(ls drafts/manifest-*.json 2>/dev/null | sort); do
+            echo "Checking manifest: $MANIFEST"
+            python3 pipeline/auto_send.py "$MANIFEST"
+            CODE=$?
+            if [ $CODE -eq 2 ]; then
+              echo "Sent $MANIFEST — stopping (one send per run)."
+              SENT=1
+              break
+            fi
+            # Exit 0 = skipped (not due, already sent, 0-verified, etc.)
+            # Exit 1 = transient error, retry next hour — continue to next
+            # manifest rather than failing the whole run on one bad draft.
+          done
+          if [ $SENT -eq 0 ]; then
+            echo "No draft sent this run."
           fi
-          echo "Checking manifest: $MANIFEST"
-          echo "MANIFEST_PATH=$MANIFEST" >> "$GITHUB_ENV"
-          python3 pipeline/auto_send.py "$MANIFEST"
 
-      - name: Commit manifest update
-        # Records sent/cancelled so later runs skip this draft. Best-effort:
-        # Buttondown's email status is the source of truth, so a failed
-        # commit can't cause a double-send (the next run re-checks it).
+      - name: Commit manifest updates
+        # Records sent/cancelled flags so later runs skip those drafts.
+        # Commit ALL manifests (the loop may have updated several).
+        # Best-effort: Buttondown's email status is the source of truth, so
+        # a failed commit can't cause a double-send (next run re-checks it).
         run: |
-          if [ -z "$MANIFEST_PATH" ]; then
-            echo "No manifest was checked — nothing to commit."
-            exit 0
-          fi
           git config user.name "alamo-bot"
           git config user.email "alamo-bot@users.noreply.github.com"
-          git add "$MANIFEST_PATH"
-          git diff --cached --quiet || git commit -m "auto-send: manifest update"
+          git add drafts/manifest-*.json
+          git diff --cached --quiet || git commit -m "auto-send: manifest updates"
           git push || echo "manifest push failed (non-fatal)"

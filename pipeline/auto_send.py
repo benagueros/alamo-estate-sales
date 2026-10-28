@@ -144,7 +144,9 @@ def main():
         manifest["sent"] = True
         json.dump(manifest, open(manifest_path, "w"), indent=2)
         print(f"Sent draft {email_id} ({manifest.get('subject')}).")
-        return 0
+        # Exit 2 = actually sent (distinct from 0 = skipped, 1 = retry).
+        # The workflow loop uses this to stop after one send per hour.
+        return 2
     print(f"Send issued for {email_id} but status is "
           f"{email.get('status') if email else 'unknown'} — "
           f"will re-check next hour.")

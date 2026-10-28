@@ -45,7 +45,11 @@ jobs:
         # without this step the monthly guard (state.json) would undercount
         # and the daily build could overshoot the 250 free cap. Same snippet
         # as build-issue.yml. Runs even if comp-fetch failed (if: always)
-        # so partial spend is still recorded; a missing brief is tolerated.
+        # so partial spend is still recorded.
+        # Push retry: a failed push does NOT self-heal ("next run
+        # reconciles" was false — the next run starts from the old state,
+        # so failed credits are silently lost). Retry once with rebase;
+        # if that fails, fail loudly so the loss is visible.
         if: always()
         run: |
           python3 - <<'EOF'
@@ -61,8 +65,15 @@ jobs:
               brief = json.load(open("out/comp-brief.json"))
               spent = brief.get("credits_charged", 0)
           except (FileNotFoundError, json.JSONDecodeError):
+              # Brief missing: either fetch never ran (0 credits, fine) or
+              # fetch crashed mid-run after spending credits (those credits
+              # are now UNACCOUNTED — the guard will undercount). This is a
+              # known gap: comps.py does not write the brief incrementally.
+              # Loud warning so the undercount is visible, not silent.
               spent = 0
-              print("no comp-brief found — recording 0 credits")
+              print("WARNING: no comp-brief found — recording 0 credits. "
+                    "If comp-fetch crashed after spending credits, those "
+                    "credits are unaccounted for in the monthly guard.")
           state["trawl_credits_used"] += spent
           json.dump(state, open("state.json", "w"), indent=2)
           print(f"comp-check spent {spent} credits; "
@@ -72,7 +83,11 @@ jobs:
           git config user.email "alamo-bot@users.noreply.github.com"
           git add state.json
           git diff --cached --quiet || git commit -m "comp-check: record trawl credits"
-          git push || echo "state push failed (non-fatal; next run reconciles)"
+          git push || (git pull --rebase && git push) || {
+            echo "ERROR: state push failed after rebase retry — "
+            echo "credits recorded locally but NOT persisted. Re-run or push manually."
+            exit 1
+          }
 
       - name: Upload brief
         uses: actions/upload-artifact@v4

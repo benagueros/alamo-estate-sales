@@ -349,6 +349,13 @@ def merge_finds(keyword_finds, vision_finds, max_finds=4):
         # + specific backfill), drop the kept finds — otherwise both coexist
         # and specificity is defeated. This can free a slot even when kept
         # is full, so don't break on fullness before checking subsumption.
+        # Policy: specificity trumps weight/source here. A specific model
+        # ("rolex datejust 36") is strictly more actionable for the reader
+        # than a vague brand ("rolex") for the same sale, even if the vague
+        # find scored higher — the reader needs to know what to look for,
+        # not just the brand. Weight still governs the initial ranking; this
+        # eviction only applies when a more specific find for the SAME sale
+        # is available as a backfill candidate.
         subsumed_kept = [g for g in kept
                          if g.get("sale_id") == f.get("sale_id")
                          and set(g["query"].split()) < ft]
