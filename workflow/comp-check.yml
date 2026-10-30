@@ -33,6 +33,7 @@ jobs:
           python-version: "3.12"
 
       - name: Fetch sold comps
+        id: fetch
         env:
           TRAWL_API_KEY: ${{ secrets.TRAWL_API_KEY }}
         run: |
@@ -40,20 +41,31 @@ jobs:
           if [ "${{ inputs.verify }}" = "true" ]; then ARGS="--verify"; fi
           python3 comps.py "${{ inputs.finds_file }}" $ARGS --out out
 
+      - name: Upload brief
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comp-brief
+          path: |
+            out/comp-brief.json
+            out/comp-brief.md
+
+      - name: Brief summary
+        if: always()
+        run: cat out/comp-brief.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No brief to summarize."
+
       - name: Record credits spent
-        # Comp-check runs are manual, but they spend real trawl credits —
-        # without this step the monthly guard (state.json) would undercount
-        # and the daily build could overshoot the 250 free cap. Same snippet
-        # as build-issue.yml. Runs even if comp-fetch failed (if: always)
-        # so partial spend is still recorded.
-        # Push retry: a failed push does NOT self-heal ("next run
-        # reconciles" was false — the next run starts from the old state,
-        # so failed credits are silently lost). Retry once with rebase;
-        # if that fails, fail loudly so the loss is visible.
+        # LAST step by design: credit recording is bookkeeping, the brief is
+        # the main output. If this step fails (push conflict), it must not
+        # block the brief upload above. Runs even if comp-fetch failed
+        # (if: always) so partial spend is still recorded.
+        # Push retry: a failed push does NOT self-heal — the next run starts
+        # from the old state, so failed credits are silently lost. Retry once
+        # with rebase; if that fails, fail loudly so the loss is visible.
         if: always()
         run: |
           python3 - <<'EOF'
-          import json, datetime, os
+          import json, datetime, os, sys
           month = datetime.date.today().strftime("%Y-%m")
           try:
               state = json.load(open("state.json"))
@@ -69,11 +81,12 @@ jobs:
               # fetch crashed mid-run after spending credits (those credits
               # are now UNACCOUNTED — the guard will undercount). This is a
               # known gap: comps.py does not write the brief incrementally.
-              # Loud warning so the undercount is visible, not silent.
-              spent = 0
-              print("WARNING: no comp-brief found — recording 0 credits. "
+              # Fail loudly (this step is last, so nothing is blocked) so
+              # the undercount is visible, not silent.
+              print("ERROR: no comp-brief found — cannot determine credits spent. "
                     "If comp-fetch crashed after spending credits, those "
                     "credits are unaccounted for in the monthly guard.")
+              sys.exit(1)
           state["trawl_credits_used"] += spent
           json.dump(state, open("state.json", "w"), indent=2)
           print(f"comp-check spent {spent} credits; "
@@ -88,14 +101,3 @@ jobs:
             echo "credits recorded locally but NOT persisted. Re-run or push manually."
             exit 1
           }
-
-      - name: Upload brief
-        uses: actions/upload-artifact@v4
-        with:
-          name: comp-brief
-          path: |
-            out/comp-brief.json
-            out/comp-brief.md
-
-      - name: Brief summary
-        run: cat out/comp-brief.md >> "$GITHUB_STEP_SUMMARY"

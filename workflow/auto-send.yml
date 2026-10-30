@@ -51,25 +51,38 @@ jobs:
         # checkout timestamp). Send at most one per run: stop after the first
         # successful send (exit 2). Older due drafts are not starved by newer
         # ones — a still-due older draft sends before a newer one is tried.
+        # Bash -e guard: GitHub Actions runs bash with errexit, so a
+        # non-zero exit from auto_send.py would abort the script before
+        # CODE is captured. The `|| CODE=$?` guard prevents that.
+        # Error visibility: if no draft sends but some manifests errored
+        # (exit 1 = transient API failure or bad manifest), fail the run so
+        # the errors are visible instead of silently swallowed.
         env:
           BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
         run: |
           SENT=0
+          ERRORS=0
           for MANIFEST in $(ls drafts/manifest-*.json 2>/dev/null | sort); do
             echo "Checking manifest: $MANIFEST"
-            python3 pipeline/auto_send.py "$MANIFEST"
-            CODE=$?
+            CODE=0
+            python3 pipeline/auto_send.py "$MANIFEST" || CODE=$?
             if [ $CODE -eq 2 ]; then
               echo "Sent $MANIFEST — stopping (one send per run)."
               SENT=1
               break
+            elif [ $CODE -eq 1 ]; then
+              echo "Manifest $MANIFEST errored (transient or bad manifest) — continuing to next."
+              ERRORS=$((ERRORS + 1))
             fi
             # Exit 0 = skipped (not due, already sent, 0-verified, etc.)
-            # Exit 1 = transient error, retry next hour — continue to next
-            # manifest rather than failing the whole run on one bad draft.
           done
-          if [ $SENT -eq 0 ]; then
-            echo "No draft sent this run."
+          if [ $SENT -eq 1 ]; then
+            echo "Draft sent this run."
+          elif [ $ERRORS -gt 0 ]; then
+            echo "ERROR: $ERRORS manifest(s) errored and none sent — failing run for visibility."
+            exit 1
+          else
+            echo "No draft sent this run (none due)."
           fi
 
       - name: Commit manifest updates
@@ -77,9 +90,17 @@ jobs:
         # Commit ALL manifests (the loop may have updated several).
         # Best-effort: Buttondown's email status is the source of truth, so
         # a failed commit can't cause a double-send (next run re-checks it).
+        # Glob guard: if no manifests exist, `git add` with an unexpanded
+        # glob fails under bash -e — skip cleanly instead.
         run: |
           git config user.name "alamo-bot"
           git config user.email "alamo-bot@users.noreply.github.com"
-          git add drafts/manifest-*.json
+          shopt -s nullglob
+          MANIFESTS=(drafts/manifest-*.json)
+          if [ ${#MANIFESTS[@]} -eq 0 ]; then
+            echo "No manifests to commit."
+            exit 0
+          fi
+          git add "${MANIFESTS[@]}"
           git diff --cached --quiet || git commit -m "auto-send: manifest updates"
           git push || echo "manifest push failed (non-fatal)"

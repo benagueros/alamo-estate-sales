@@ -20,9 +20,12 @@ Usage:
     BUTTONDOWN_API_KEY=... python3 pipeline/auto_send.py [manifest]
     (default manifest: drafts/manifest.json)
 
-Exit 0 in every expected case (sent / skipped / cancelled). Exit 1 only
-on an unexpected error (Buttondown API failure, corrupt manifest) so the
-workflow logs it and a later run retries.
+Exit codes (the workflow loop depends on these):
+  0 = skipped (not due, already sent/cancelled, 0-verified, stale) — no send.
+  1 = error (Buttondown API failure, corrupt/missing created_at) — retry next hour.
+  2 = actually sent a draft — workflow stops after one send per run.
+Older docstring said "exit 0 in every expected case" — stale since exit 2
+was added for the oldest-first loop; 0 now means skipped only.
 """
 import datetime
 import json
