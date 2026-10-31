@@ -88,10 +88,14 @@ jobs:
       - name: Commit manifest updates
         # Records sent/cancelled flags so later runs skip those drafts.
         # Commit ALL manifests (the loop may have updated several).
+        # if: always() — even when the send step fails (exit 1 on errors),
+        # manifest updates from the loop (e.g. cancelled flags) must still
+        # persist; otherwise the next run re-does that work.
         # Best-effort: Buttondown's email status is the source of truth, so
         # a failed commit can't cause a double-send (next run re-checks it).
         # Glob guard: if no manifests exist, `git add` with an unexpanded
         # glob fails under bash -e — skip cleanly instead.
+        if: always()
         run: |
           git config user.name "alamo-bot"
           git config user.email "alamo-bot@users.noreply.github.com"

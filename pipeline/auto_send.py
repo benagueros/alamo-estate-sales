@@ -62,9 +62,15 @@ def main():
         return 1
     try:
         manifest = json.load(open(manifest_path))
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
         print(f"No manifest at {manifest_path} — nothing to send.")
         return 0
+    except json.JSONDecodeError:
+        # Corrupt manifest is an error, not a skip: returning 0 would
+        # silently swallow it (workflow stays green, draft never sends).
+        # Return 1 so the loop tracks it and fails the run if nothing sent.
+        print(f"Manifest at {manifest_path} is corrupt JSON — refusing to skip silently.")
+        return 1
 
     email_id = manifest.get("email_id")
     if not email_id:
