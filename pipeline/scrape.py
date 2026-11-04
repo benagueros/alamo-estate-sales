@@ -106,6 +106,13 @@ def discover(metro_url):
 
 
 def in_metro(sale):
+    # Zip-less sales pass through to the detail pass: a missing ZIP is
+    # not evidence of out-of-area (the listing may omit it), and the
+    # metro page itself is already SA-area. The detail pass extracts the
+    # address from the page, and Ben reviews the draft. Dropping zip-less
+    # sales silently lost potentially good finds.
+    if not sale["zip"]:
+        return True
     return sale["zip"].startswith(METRO_ZIP_PREFIXES)
 
 

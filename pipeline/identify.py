@@ -106,7 +106,7 @@ def extract(sales, max_finds=4):
                 "sale_title": sale.get("title"),
                 "weight": weight,
                 "evidence": find_evidence(desc, phrase),
-                "exclude": ["parts", "manual", "brochure", "model", "print",
+                "exclude": ["parts", "manual", "brochure", "print",
                             "poster", "book",
                             # accessories, not the item itself
                             "band", "strap", "box", "clasp"],

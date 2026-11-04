@@ -103,10 +103,22 @@ def sold_links_html(comp):
     return " · ".join(parts)
 
 
-def find_card(find, sale, summary, budget_skipped=False):
+def find_card(find, sale, summary, budget_skipped=False, brief_error=False):
     photo = find_photo(find, sale)
     comp = summary or {}
     n = comp.get("n", 0)
+    v = comp.get("verification") or {}
+    # Hard rule: comps publish ONLY if sold state was verified. If a find
+    # has comps but verification did not run (no checked anchors, no error),
+    # those comps are unverified — withhold stats, links, and thresholds
+    # entirely, even though n > 0. Previously this branch rendered stats +
+    # links with only a stripped writer-note ("treat comps as unconfirmed")
+    # as disclosure, and the per-draft auto-send gate (verified_finds >= 1)
+    # let a mixed draft ship the unverified find's data. Now the find
+    # renders as withheld, so no unverified comp can publish via any path.
+    verification_not_run = n > 0 and not v.get("checked") and not comp.get("error")
+    if verification_not_run:
+        n = 0
     if n:
         comps_line = (f"{money(comp['min'])} · {money(comp['max'])} — "
                       f"median ≈ {money(comp['median'])} (n={n})")
@@ -127,10 +139,6 @@ def find_card(find, sale, summary, budget_skipped=False):
                           f'anchor(s) removed; remaining stats unverified — '
                           f'confirm before publishing)</span>')
             comps_line += f"<br>{vline}"
-        elif not comp.get("error"):
-            comps_line += ("<br>Sold-state check: not run "
-                           '<span class="writer-note">(writer: treat comps '
-                           "as unconfirmed)</span>")
         links = sold_links_html(comp)
         if links:
             comps_line += f'<br><span class="soldlinks">Sold listings: {links}</span>'
@@ -140,13 +148,25 @@ def find_card(find, sale, summary, budget_skipped=False):
                      f"Under ~{money(buy)}, buy it on the spot.")
     else:
         v = comp.get("verification") or {}
-        if v.get("failed"):
+        if verification_not_run:
+            # Reader-visible (NOT a writer-note — send.py strips those).
+            # Distinct from "No verified solds": verification didn't run at
+            # all, so we don't know if solds exist, vs. verification ran and
+            # found none. Stats/links/threshold withheld per hard rule.
+            comps_line = ("Verification not run — stats and sold links withheld "
+                          "until sold state is confirmed.")
+        elif v.get("failed"):
             comps_line = (f"No verified solds — {len(v['failed'])} anchor comp(s) "
                           f"did not confirm as sold and were removed. "
                           f"<span class=\"writer-note\">(writer: do not publish "
                           f"without confirmed comps)</span>")
         elif comp.get("error"):
             comps_line = f"No comps ({html.escape(str(comp['error']))})."
+        elif brief_error:
+            # Missing/corrupt brief is a pipeline failure, not a no-market
+            # signal. Don't let the reader infer the item has no eBay market.
+            comps_line = ("Comp data unavailable — the comp lookup failed or "
+                          "produced no usable data. Not a no-market signal.")
         elif budget_skipped:
             comps_line = ("Comps skipped — monthly trawl credit guard tripped. "
                           "<span class=\"writer-note\">(writer: not a no-market "
@@ -156,7 +176,10 @@ def find_card(find, sale, summary, budget_skipped=False):
         flags = comp.get("flags") or []
         if flags:
             comps_line += f" <em>({' ; '.join(html.escape(f) for f in flags)})</em>"
-        threshold = "No threshold: needs a wider query or a different find."
+        if verification_not_run:
+            threshold = "No threshold: verification not run."
+        else:
+            threshold = "No threshold: needs a wider query or a different find."
     addr = sale.get('address', '') or (
         "Online auction" if sale.get('online') else "")
     parts = [sale.get('dates_text', ''), addr, sale.get('company', '')]
@@ -182,7 +205,7 @@ def find_card(find, sale, summary, budget_skipped=False):
     </div>"""
 
 
-def build(sales, finds, brief, date_str):
+def build(sales, finds, brief, date_str, brief_error=False):
     by_id = {s.get("id"): s for s in sales}
     summaries = {s["id"]: s for s in brief.get("summaries", [])}
     budget_skipped = brief.get("budget_skipped", False)
@@ -190,7 +213,7 @@ def build(sales, finds, brief, date_str):
     for find in finds:
         sale = by_id.get(find.get("sale_id"), {})
         cards.append(find_card(find, sale, summaries.get(find["id"]),
-                               budget_skipped))
+                               budget_skipped, brief_error))
     try:
         pretty = datetime.date.fromisoformat(date_str).strftime("%A, %B %-d, %Y")
     except ValueError:
@@ -199,17 +222,32 @@ def build(sales, finds, brief, date_str):
     # comps" is only true if at least one find has a verified comp. If
     # every find withheld stats (0 confirmed), say so instead of claiming
     # sold-listing comps the issue doesn't have.
+    # "Each" honesty: INTRO claims EVERY find has real sold comps. That's
+    # only true if ALL finds are verified — if some finds show "No verified
+    # solds", the intro must not claim "each". Use a qualified intro for
+    # mixed drafts.
+    summaries_list = brief.get("summaries", [])
     any_verified = any(
         (s.get("verification") or {}).get("passed")
-        for s in brief.get("summaries", []))
-    intro = INTRO if any_verified else (
-        "Finds from this week's San Antonio-area estate sales. "
-        "No verified eBay sold comps were available for these finds today — "
-        "stats are withheld rather than published unverified.")
-    methodology = METHODOLOGY if any_verified else (
-        "No verified sold-listing comps were available for this issue. "
-        "Photos belong to their estate-sale companies, linked from the "
-        "original listings.")
+        for s in summaries_list)
+    all_verified = bool(summaries_list) and all(
+        (s.get("verification") or {}).get("passed")
+        for s in summaries_list)
+    if all_verified:
+        intro = INTRO
+        methodology = METHODOLOGY
+    elif any_verified:
+        intro = ("Finds from this week's San Antonio-area estate sales, "
+                 "with real eBay sold comps where verified. Finds without "
+                 "verified comps show no stats rather than unverified numbers.")
+        methodology = METHODOLOGY
+    else:
+        intro = ("Finds from this week's San Antonio-area estate sales. "
+                 "No verified eBay sold comps were available for these finds today — "
+                 "stats are withheld rather than published unverified.")
+        methodology = ("No verified sold-listing comps were available for this issue. "
+                       "Photos belong to their estate-sale companies, linked from the "
+                       "original listings.")
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -259,17 +297,21 @@ def main():
     brief_path = sys.argv[3]
     try:
         brief = json.load(open(brief_path))
+        brief_error = False
     except (FileNotFoundError, json.JSONDecodeError):
         # Comp step skipped or failed: render finds with the n=0 path
-        # rather than crashing the daily build.
+        # rather than crashing the daily build. But carry brief_error so
+        # the cards say "data unavailable" instead of "no eBay market" —
+        # a missing brief is a pipeline failure, not a no-market signal.
         brief = {"summaries": []}
+        brief_error = True
     date_str = datetime.date.today().isoformat()
     for i, a in enumerate(sys.argv[4:]):
         if a == "--date" and i + 1 < len(sys.argv[4:]):
             date_str = sys.argv[5 + i]
     os.makedirs("drafts", exist_ok=True)
     out = f"drafts/{date_str}.html"
-    open(out, "w").write(build(sales, finds, brief, date_str))
+    open(out, "w").write(build(sales, finds, brief, date_str, brief_error))
     print(f"Wrote {out}")
     return 0
 

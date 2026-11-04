@@ -29,7 +29,11 @@ async function verify(raw, headers, secret) {
   const ts = parts.find((p) => p.startsWith("ts="))?.slice(3);
   const h1s = parts.filter((p) => p.startsWith("h1=")).map((p) => p.slice(3));
   if (!ts || h1s.length === 0) return false;
-  if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false; // replay
+  // Reject non-numeric timestamps: Number("abc") is NaN, and NaN > 300 is
+  // false, so a malformed ts would silently skip the replay-window check.
+  const tsNum = Number(ts);
+  if (!Number.isFinite(tsNum)) return false;
+  if (Math.abs(Date.now() / 1000 - tsNum) > 300) return false; // replay
   const expected = await hmacHex(secret, `${ts}:${raw}`);
   return h1s.some((h) => timingSafeEqual(expected, h));
 }

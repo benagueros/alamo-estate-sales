@@ -64,8 +64,16 @@ def api_get(path, params, api_key):
                     time.sleep(int(retry_after) + 1)
                 except (TypeError, ValueError):
                     time.sleep(61)
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    return json.load(resp), resp.headers
+                # Second 429 (or any retry error) must be classified too —
+                # previously it escaped as a raw HTTPError, bypassing the
+                # quota_spent accounting that the caller relies on.
+                try:
+                    with urllib.request.urlopen(req, timeout=60) as resp:
+                        return json.load(resp), resp.headers
+                except urllib.error.HTTPError as exc2:
+                    if exc2.code == 429:
+                        raise QuotaSpent("monthly credits spent (retry also 429)")
+                    raise RuntimeError(f"HTTP {exc2.code} on retry")
             raise QuotaSpent(f"monthly credits spent (no Retry-After); body={body}")
         raise RuntimeError(f"HTTP {exc.code}: {body}")
 
@@ -373,7 +381,8 @@ def main():
                 # at all for this find. Withhold stats/thresholds entirely
                 # — the find drops to the n=0 path. A writer note alone is
                 # not enough: if the note is missed, unverified stats publish.
-                # (1+ confirmed keeps recomputed stats + disclosure.)
+                # (Any failed anchor, even with 1+ confirmed, also withholds
+                # per the strict Nov 2026 rule below — no partial credit.)
                 s = {"id": find["id"], "query": find["query"], "n": 0,
                      "comps": [], "verification": verification,
                      "flags": [f"0/{len(anchors)} anchors confirmed as sold — "
@@ -381,22 +390,29 @@ def main():
                 summaries[-1] = s
                 print("  0 anchors confirmed — stats withheld (n=0)")
                 continue
-            # Hard rule: a failed anchor is a known-bad comp — drop it from
-            # the published stats and links, then recompute. (The writer
-            # note below still tells Ben what was removed.)
+            # Hard rule (strict, Nov 2026): ANY failed anchor withholds the
+            # find's stats entirely. Previously we dropped failed anchors
+            # and recomputed from the kept dataset — but the kept listings
+            # were never individually verified (only the anchors were
+            # /item-checked), so the "remaining stats unverified" flag
+            # admitted the gap while still publishing. That flag was the
+            # Toikka fail-closed breach (Nov 4 review): stats published
+            # while labeled unverified. Now: no partial credit. The find
+            # drops to the n=0 path ("No verified solds — X anchor(s)
+            # did not confirm"), and Ben can re-run or drop it.
+            # (0 failed = all anchors passed → stats publish normally.)
             failed_ids = {f.get("item_id") for f in verification["failed"]}
             if failed_ids:
-                kept = [c for c in s["comps"]
-                        if c.get("item_id") not in failed_ids]
-                dropped = len(s["comps"]) - len(kept)
-                s = compute_stats(find, kept)
-                s["verification"] = verification
-                s["flags"] = (s.get("flags") or []) + [
-                    f"{dropped} anchor comp(s) did not confirm as sold "
-                    f"and were removed; remaining stats unverified"]
+                # Mirror the 0-anchors path: n=0, no comps, no stats keys.
+                # Keep verification so issue.py renders the failed-anchor
+                # message. Drop the old "remaining stats unverified" flag
+                # (no stats publish, so no flag needed).
+                s = {"id": s["id"], "query": s["query"], "n": 0,
+                     "comps": [], "verification": verification,
+                     "flags": [f for f in (s.get("flags") or [])
+                               if "remaining stats unverified" not in f]}
                 summaries[-1] = s
-                print(f"  dropped {dropped} failed anchor(s); "
-                      f"stats recomputed (n={s['n']})")
+                print(f"  {len(failed_ids)} anchor(s) failed — stats withheld (strict)")
 
     # Schema-change tripwire: unknown listing_state values fail closed, so
     # a trawl schema change (e.g. a new "sold" state) would silently zero

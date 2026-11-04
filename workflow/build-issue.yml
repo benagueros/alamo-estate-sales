@@ -91,8 +91,18 @@ jobs:
           TRAWL_API_KEY: ${{ secrets.TRAWL_API_KEY }}
         run: |
           python3 comps.py finds.json --verify --verify-cap 4 --out out
+
+      - name: Record credits spent
+        # Separate step with if: always() (ported from comp-check): if
+        # comps.py crashes, the inline recorder in the old layout never ran
+        # and those credits were silently lost from the monthly guard.
+        # This step commits + pushes state.json itself so it doesn't depend
+        # on the later draft commit (which is skipped when comps fails).
+        # Rebase-retry: a failed push does NOT self-heal — fail loudly.
+        if: always()
+        run: |
           python3 - <<'EOF'
-          import json, datetime
+          import json, datetime, sys, os
           month = datetime.date.today().strftime("%Y-%m")
           try:
               state = json.load(open("state.json"))
@@ -100,11 +110,31 @@ jobs:
               state = {}
           if state.get("trawl_month") != month:
               state = {"trawl_month": month, "trawl_credits_used": 0}
-          brief = json.load(open("out/comp-brief.json"))
-          state["trawl_credits_used"] += brief.get("credits_charged", 0)
+          try:
+              brief = json.load(open("out/comp-brief.json"))
+              spent = brief.get("credits_charged", 0)
+          except (FileNotFoundError, json.JSONDecodeError):
+              if os.path.exists("out/comp-brief.json"):
+                  print("WARNING: comp-brief exists but unreadable — recording 0.")
+                  spent = 0
+              else:
+                  print("ERROR: no comp-brief found — cannot determine credits spent. "
+                        "If comps crashed after spending credits, those "
+                        "credits are unaccounted for in the monthly guard.")
+                  sys.exit(1)
+          state["trawl_credits_used"] += spent
           json.dump(state, open("state.json", "w"), indent=2)
-          print(f"month credits used now: {state['trawl_credits_used']}")
+          print(f"build spent {spent} credits; "
+                f"month total now: {state['trawl_credits_used']}")
           EOF
+          git config user.name "alamo-bot"
+          git config user.email "alamo-bot@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet || git commit -m "build: record trawl credits"
+          git push || (git pull --rebase && git push) || {
+            echo "ERROR: state push failed after rebase retry."
+            exit 1
+          }
 
       - name: Assemble issue draft
         run: python3 pipeline/issue.py sales.json finds.json out/comp-brief.json
@@ -150,4 +180,4 @@ jobs:
           git config user.email "alamo-bot@users.noreply.github.com"
           git add drafts state.json
           git diff --cached --quiet || git commit -m "issue draft $(date +%F)"
-          git push
+          git push || (git pull --rebase && git push) || echo "draft push failed (non-fatal)"

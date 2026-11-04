@@ -63,10 +63,13 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 # even when other projects are active.
 REQUEST_SLEEP = 8
 
-EXCLUDE = ["parts", "manual", "brochure", "model", "print",
+EXCLUDE = ["parts", "manual", "brochure", "print",
            "poster", "book",
            # accessories, not the item itself
            "band", "strap", "box", "clasp"]
+# NOTE: "model" was removed from EXCLUDE (Nov 2026 FULL review): it dropped
+# legitimate comps like "model train" / "scale model" where "model" is part
+# of the product name, not an accessory/manual signal.
 
 PROMPT_TEMPLATE = """You are curating finds for an estate-sale newsletter. These {n} photos are from one estate sale listing titled "{title}".
 
