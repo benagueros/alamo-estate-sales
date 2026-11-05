@@ -119,6 +119,14 @@ def find_card(find, sale, summary, budget_skipped=False, brief_error=False):
     verification_not_run = n > 0 and not v.get("checked") and not comp.get("error")
     if verification_not_run:
         n = 0
+    # Defense-in-depth (Nov 5 review): comps.py now withholds stats on ANY
+    # failed anchor (n=0), so a summary with n > 0 and failed anchors should
+    # never arrive — but find_card must not trust that. If one does arrive
+    # (stale/hand-edited brief, future comps.py change), withhold here too
+    # instead of publishing stats with only a strippable writer-note.
+    failed_anchors = v.get("failed") or []
+    if n > 0 and failed_anchors:
+        n = 0
     if n:
         comps_line = (f"{money(comp['min'])} · {money(comp['max'])} — "
                       f"median ≈ {money(comp['median'])} (n={n})")
@@ -226,13 +234,18 @@ def build(sales, finds, brief, date_str, brief_error=False):
     # only true if ALL finds are verified — if some finds show "No verified
     # solds", the intro must not claim "each". Use a qualified intro for
     # mixed drafts.
-    summaries_list = brief.get("summaries", [])
+    # (Nov 5 review, L2): compute over the finds that will render, not
+    # over the summaries present. A find missing from the brief
+    # (summaries.get returns None) renders "No verified solds", so it
+    # must count as unverified here — otherwise all_verified can be True
+    # while a rendered find has no comps.
+    find_summaries = [summaries.get(f.get("id")) for f in finds]
     any_verified = any(
-        (s.get("verification") or {}).get("passed")
-        for s in summaries_list)
-    all_verified = bool(summaries_list) and all(
-        (s.get("verification") or {}).get("passed")
-        for s in summaries_list)
+        ((s or {}).get("verification") or {}).get("passed")
+        for s in find_summaries)
+    all_verified = bool(find_summaries) and all(
+        ((s or {}).get("verification") or {}).get("passed")
+        for s in find_summaries)
     if all_verified:
         intro = INTRO
         methodology = METHODOLOGY
@@ -240,7 +253,16 @@ def build(sales, finds, brief, date_str, brief_error=False):
         intro = ("Finds from this week's San Antonio-area estate sales, "
                  "with real eBay sold comps where verified. Finds without "
                  "verified comps show no stats rather than unverified numbers.")
-        methodology = METHODOLOGY
+        # (Nov 5 review, L3): the mixed branch previously reused the
+        # unqualified METHODOLOGY constant, which claims "Comps are from
+        # actual eBay sold listings" for the whole issue even though some
+        # finds have none. Qualify it to match the intro.
+        methodology = ("Comps are from actual eBay sold listings (sold, not "
+                       "asking) where verified. Finds without verified comps "
+                       "show no stats rather than unverified numbers. Thin "
+                       "datasets are flagged, never faked. Photos belong to "
+                       "their estate-sale companies, linked from the original "
+                       "listings.")
     else:
         intro = ("Finds from this week's San Antonio-area estate sales. "
                  "No verified eBay sold comps were available for these finds today — "

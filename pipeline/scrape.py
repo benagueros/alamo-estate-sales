@@ -109,8 +109,9 @@ def in_metro(sale):
     # Zip-less sales pass through to the detail pass: a missing ZIP is
     # not evidence of out-of-area (the listing may omit it), and the
     # metro page itself is already SA-area. The detail pass extracts the
-    # address from the page, and Ben reviews the draft. Dropping zip-less
-    # sales silently lost potentially good finds.
+    # address from the page and main() re-validates any ZIP found there
+    # (Nov 5 review) — a non-metro ZIP in the detail address drops the
+    # sale. Dropping zip-less sales here silently lost good finds.
     if not sale["zip"]:
         return True
     return sale["zip"].startswith(METRO_ZIP_PREFIXES)
@@ -231,6 +232,23 @@ def main():
             print(f"  ok {s['id']} ({len(s['photo_urls'])} photos)")
             time.sleep(2)
         browser.close()
+
+    # Re-validate zip-less sales against the detail-pass address (Nov 5
+    # review): a sale that passed in_metro() with no ZIP may still be
+    # out-of-area. The detail page's address usually carries a ZIP — if
+    # it does and it's non-metro, drop the sale. If the address has no
+    # ZIP either, keep it (Ben reviews the draft). Fill in the ZIP when
+    # found so downstream steps see the real one.
+    for s in sales:
+        if not s.get("zip"):
+            m = re.search(r"\b(\d{5})\b", s.get("address", ""))
+            if m:
+                s["zip"] = m.group(1)
+                if not m.group(1).startswith(METRO_ZIP_PREFIXES):
+                    print(f"  out-of-area (detail address): {s['url']}",
+                          file=sys.stderr)
+                    s["_drop"] = True
+    sales = [s for s in sales if not s.pop("_drop", False)]
 
     sales = [s for s in sales if len(s.get("description", "")) > 40]
     json.dump(sales, open(out, "w"), indent=2)

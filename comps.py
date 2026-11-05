@@ -67,6 +67,9 @@ def api_get(path, params, api_key):
                 # Second 429 (or any retry error) must be classified too —
                 # previously it escaped as a raw HTTPError, bypassing the
                 # quota_spent accounting that the caller relies on.
+                # (Nov 5 review): a URLError/timeout on retry is not an
+                # HTTPError, so it escaped unclassified too — catch it and
+                # raise a clear RuntimeError instead of a bare URLError.
                 try:
                     with urllib.request.urlopen(req, timeout=60) as resp:
                         return json.load(resp), resp.headers
@@ -74,6 +77,8 @@ def api_get(path, params, api_key):
                     if exc2.code == 429:
                         raise QuotaSpent("monthly credits spent (retry also 429)")
                     raise RuntimeError(f"HTTP {exc2.code} on retry")
+                except urllib.error.URLError as exc2:
+                    raise RuntimeError(f"network error on retry: {exc2.reason}")
             raise QuotaSpent(f"monthly credits spent (no Retry-After); body={body}")
         raise RuntimeError(f"HTTP {exc.code}: {body}")
 
