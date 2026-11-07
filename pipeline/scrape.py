@@ -241,10 +241,15 @@ def main():
     # found so downstream steps see the real one.
     for s in sales:
         if not s.get("zip"):
-            m = re.search(r"\b(\d{5})\b", s.get("address", ""))
-            if m:
-                s["zip"] = m.group(1)
-                if not m.group(1).startswith(METRO_ZIP_PREFIXES):
+            # Last 5-digit token, not the first (Nov 6 review): a street or
+            # suite number ("12345 Main St, San Antonio, TX 78240") is a
+            # 5-digit token too, and the ZIP is the trailing one. Taking
+            # the first token could wrongly drop a metro sale or wrongly
+            # accept an out-of-area one.
+            zips = re.findall(r"\b(\d{5})\b", s.get("address", ""))
+            if zips:
+                s["zip"] = zips[-1]
+                if not zips[-1].startswith(METRO_ZIP_PREFIXES):
                     print(f"  out-of-area (detail address): {s['url']}",
                           file=sys.stderr)
                     s["_drop"] = True

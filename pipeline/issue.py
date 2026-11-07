@@ -103,6 +103,18 @@ def sold_links_html(comp):
     return " · ".join(parts)
 
 
+def is_verified_summary(s):
+    """Strict verified-find test (Nov 6 review): a find counts as verified
+    only if it has passing anchors, NO failed anchors, and n > 0.
+    comps.py emits partial-failure summaries with passed AND failed
+    anchors at n=0 — a passed-only check overclaims those as verified
+    (intro says "each" while the card shows "No verified solds")."""
+    if not s or s.get("n", 0) <= 0:
+        return False
+    v = s.get("verification") or {}
+    return bool(v.get("passed")) and not v.get("failed")
+
+
 def find_card(find, sale, summary, budget_skipped=False, brief_error=False):
     photo = find_photo(find, sale)
     comp = summary or {}
@@ -234,18 +246,12 @@ def build(sales, finds, brief, date_str, brief_error=False):
     # only true if ALL finds are verified — if some finds show "No verified
     # solds", the intro must not claim "each". Use a qualified intro for
     # mixed drafts.
-    # (Nov 5 review, L2): compute over the finds that will render, not
-    # over the summaries present. A find missing from the brief
-    # (summaries.get returns None) renders "No verified solds", so it
-    # must count as unverified here — otherwise all_verified can be True
-    # while a rendered find has no comps.
+    # (Nov 6 review): use the strict is_verified_summary test — passed-only
+    # overclaims partial-failure finds (passed + failed anchors, n=0).
     find_summaries = [summaries.get(f.get("id")) for f in finds]
-    any_verified = any(
-        ((s or {}).get("verification") or {}).get("passed")
-        for s in find_summaries)
+    any_verified = any(is_verified_summary(s) for s in find_summaries)
     all_verified = bool(find_summaries) and all(
-        ((s or {}).get("verification") or {}).get("passed")
-        for s in find_summaries)
+        is_verified_summary(s) for s in find_summaries)
     if all_verified:
         intro = INTRO
         methodology = METHODOLOGY

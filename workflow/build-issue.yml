@@ -161,9 +161,15 @@ jobs:
           import json
           # Attach the verified-find count so auto-send knows whether this
           # draft is eligible (hard rule: never auto-send 0-verified).
+          # (Nov 6 review): strict test — passed non-empty AND failed empty
+          # AND n > 0. A passed-only count overclaims partial-failure finds
+          # (passed + failed anchors, n=0) as verified, which could let a
+          # 0-verified draft auto-send.
           brief = json.load(open("out/comp-brief.json"))
           verified = sum(1 for s in brief.get("summaries", [])
-                         if (s.get("verification") or {}).get("passed"))
+                         if s.get("n", 0) > 0
+                         and (s.get("verification") or {}).get("passed")
+                         and not (s.get("verification") or {}).get("failed"))
           import datetime
           manifest_path = f"drafts/manifest-{datetime.date.today().isoformat()}.json"
           manifest = json.load(open(manifest_path))
