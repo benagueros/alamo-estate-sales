@@ -176,10 +176,16 @@ def find_card(find, sale, summary, budget_skipped=False, brief_error=False):
             comps_line = ("Verification not run — stats and sold links withheld "
                           "until sold state is confirmed.")
         elif v.get("failed"):
+            # (Nov 8 review): surface the per-anchor failure reasons — the
+            # modal outcome is 0/3 or 1/3 verified, and the reason (e.g.
+            # listing_state='active') is otherwise invisible from the repo.
+            notes = "; ".join(
+                f"{f.get('item_id', '?')}: {f.get('note', '?')}"
+                for f in v["failed"])
             comps_line = (f"No verified solds — {len(v['failed'])} anchor comp(s) "
                           f"did not confirm as sold and were removed. "
                           f"<span class=\"writer-note\">(writer: do not publish "
-                          f"without confirmed comps)</span>")
+                          f"without confirmed comps — {html.escape(notes)})</span>")
         elif comp.get("error"):
             comps_line = f"No comps ({html.escape(str(comp['error']))})."
         elif brief_error:

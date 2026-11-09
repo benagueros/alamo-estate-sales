@@ -154,7 +154,13 @@ jobs:
             # isn't lost (the earlier Buttondown draft still exists).
             # Seconds resolution: two re-runs in the same minute are rare,
             # and the backup is best-effort record-keeping anyway.
-            mv "$MANIFEST" "drafts/manifest-$(date +%F-%H%M%S).json"
+            BACKUP="drafts/manifest-$(date +%F-%H%M%S).json"
+            mv "$MANIFEST" "$BACKUP"
+            # (Nov 8 review): a backed-up manifest stays send-eligible and
+            # sorts before the current one, so auto-send could ship the
+            # superseded draft. Mark it cancelled — auto_send.py skips
+            # cancelled manifests (auto-send.yml also narrows its glob).
+            python3 -c "import json,sys; p=sys.argv[1]; m=json.load(open(p)); m['cancelled']=True; json.dump(m, open(p,'w'), indent=2)" "$BACKUP"
           fi
           python3 pipeline/send.py "drafts/$(date +%F).html" --manifest "$MANIFEST"
           python3 - <<'EOF'
@@ -184,6 +190,37 @@ jobs:
         run: |
           git config user.name "alamo-bot"
           git config user.email "alamo-bot@users.noreply.github.com"
-          git add drafts state.json
+          # (Nov 8 review): commit the comp brief too — verification almost
+          # never passes (0/3 or 1/3 modal) and the per-anchor failure reason
+          # otherwise lives only in CI logs, so a systematic cause would be
+          # invisible from the repo.
+          git add drafts state.json out/comp-brief.json
           git diff --cached --quiet || git commit -m "issue draft $(date +%F)"
           git push || (git pull --rebase && git push) || { echo "draft push failed — manifest/state commit lost"; exit 1; }
+
+      - name: Verification summary
+        # Surface the per-find verification outcome in the Actions run
+        # summary, so a systematic verification failure is visible without
+        # digging through logs or the committed brief.
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          try:
+              brief = json.load(open("out/comp-brief.json"))
+          except Exception as exc:
+              print(f"no readable comp-brief: {exc}")
+              raise SystemExit(0)
+          lines = ["## Verification (sold-state check)", ""]
+          for s in brief.get("summaries", []):
+              v = s.get("verification") or {}
+              npass = len(v.get("passed", []))
+              nfail = len(v.get("failed", []))
+              checked = v.get("checked", 0)
+              status = "verified" if s.get("n", 0) > 0 and npass and not nfail else "WITHHELD"
+              lines.append(f"- **{s['id']}** (`{s['query']}`): {status} — {npass}/{checked} anchors confirmed")
+              for f in v.get("failed", []):
+                  lines.append(f"  - {f.get('item_id', '?')}: {f.get('note', '?')}")
+          open(os.environ["GITHUB_STEP_SUMMARY"], "a").write("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          EOF

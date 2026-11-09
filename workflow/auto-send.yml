@@ -60,9 +60,14 @@ jobs:
         env:
           BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
         run: |
+          # (Nov 8 review): glob only per-date manifests
+          # (manifest-YYYY-MM-DD.json). Backed-up manifests
+          # (manifest-YYYY-MM-DD-HHMMSS.json) are marked cancelled in
+          # build-issue, but narrowing the glob means a superseded draft
+          # can never be picked up even if the flag is lost.
           SENT=0
           ERRORS=0
-          for MANIFEST in $(ls drafts/manifest-*.json 2>/dev/null | sort); do
+          for MANIFEST in $(ls drafts/manifest-????-??-??.json 2>/dev/null | sort); do
             echo "Checking manifest: $MANIFEST"
             CODE=0
             python3 pipeline/auto_send.py "$MANIFEST" || CODE=$?

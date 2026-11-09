@@ -95,19 +95,25 @@ def same_item(title, query_words, exclude):
 def fetch_comps(find, api_key):
     """Returns (listings, credits_charged)."""
     q = find["query"]
+    words = q.lower().split()
+    # (Nov 8 review): an exclude word that appears in the query 400s trawl
+    # ("matisse la danse print" + exclude "print") — and same_item would
+    # reject every result anyway, since every query word must be in the
+    # title. Drop query words from the exclude list before calling /sold,
+    # and use the same filtered list for the local same_item filter.
+    exclude = [w for w in find.get("exclude", [])
+               if w.lower() not in words]
     params = {"query": q, "max_pages": find.get("max_pages", 2)}
     for k in ("condition", "date_from", "date_to", "marketplace"):
         if k in find:
             params[k] = find[k]
-    if "exclude" in find and find["exclude"]:
-        params["exclude"] = " ".join(find["exclude"])
+    if exclude:
+        params["exclude"] = " ".join(exclude)
     if "category" in find:
         params["category"] = find["category"]
 
     data, _ = api_get("/sold", params, api_key)
     credits = data.get("credits_charged", 0)
-    words = q.lower().split()
-    exclude = find.get("exclude", [])
     listings = [
         r for r in data.get("results", [])
         if same_item(r.get("title", ""), words, exclude)
@@ -133,9 +139,13 @@ def verify_listing(item_id, api_key):
         data, _ = api_get("/item", {"item_id": item_id}, api_key)
     except Exception as exc:
         return {"item_id": item_id, "verified": False, "note": str(exc)[:120]}
-    details = data.get("details", data)
-    state = details.get("listing_state")
-    sales = details.get("sales") or []
+    details = data.get("details") or {}
+    # (Nov 8 review): fall back to top-level fields — /item nests
+    # listing_state/sales/sale_price under "details" today, but if a
+    # response carries them top-level instead, details-only reads fail
+    # closed and silently drop the price-drift signal.
+    state = details.get("listing_state") or data.get("listing_state")
+    sales = details.get("sales") or data.get("sales") or []
     multi = len(sales) if state == "active" else 0
     sold = state in SOLD_STATES or multi > 0
     return {
@@ -143,8 +153,9 @@ def verify_listing(item_id, api_key):
         "verified": sold,
         "listing_state": state,
         "note": "" if sold else f"listing_state={state!r}: not a completed sale",
-        "sale_price": data.get("sale_price"),
-        "best_offer": bool(details.get("best_offer_available")),
+        "sale_price": details.get("sale_price") or data.get("sale_price"),
+        "best_offer": bool(details.get("best_offer_available")
+                          or data.get("best_offer_available")),
         "multi_quantity_sales": multi,
     }
 
