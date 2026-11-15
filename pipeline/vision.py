@@ -47,6 +47,10 @@ import sys
 import time
 import urllib.request
 
+# EXCLUDE lives in identify.py (single source of truth, Nov 2026 FULL
+# review) — vision.py used to carry its own copy, which had drifted.
+from identify import EXCLUDE
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 # Explicit chain wins when set; otherwise models are discovered live from the
 # API (flash models first) so a renamed/deprecated default can't 404 forever.
@@ -62,14 +66,6 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 # (TripSplit OCR, Unspun deep-dives...). 8s spacing keeps us well under
 # even when other projects are active.
 REQUEST_SLEEP = 8
-
-EXCLUDE = ["parts", "manual", "brochure", "print",
-           "poster", "book",
-           # accessories, not the item itself
-           "band", "strap", "box", "clasp"]
-# NOTE: "model" was removed from EXCLUDE (Nov 2026 FULL review): it dropped
-# legitimate comps like "model train" / "scale model" where "model" is part
-# of the product name, not an accessory/manual signal.
 
 PROMPT_TEMPLATE = """You are curating finds for an estate-sale newsletter. These {n} photos are from one estate sale listing titled "{title}".
 
@@ -141,22 +137,36 @@ def pick_models(available):
     return sorted(cands, key=rank)
 
 
+# Last-resort names when live discovery fails. "gemini-3.8-flash" was
+# dropped (Nov 2026 FULL review): no such model exists, and a dead first
+# entry wastes a 404 + retry cycle on every run.
+FALLBACK_MODELS = ["gemini-3-flash-preview", "gemini-2.5-flash",
+                   "gemini-2.0-flash"]
+
+
 def resolve_models():
     """Ordered model names to try: explicit GEMINI_MODELS env first, then
-    live discovery (flash first)."""
-    if GEMINI_MODELS_ENV:
-        return list(GEMINI_MODELS_ENV)
+    live discovery (flash first), then the fallback list.
+
+    (Nov 2026 FULL review): the env chain used to REPLACE discovery — a
+    single dead env entry killed the run with no fallback. Now the env
+    list wins ordering, but discovered models still follow it."""
+    discovered = []
     try:
         models = pick_models(list_models())
         if models:
             print(f"  discovered models: {', '.join(models[:4])}"
                   + ("..." if len(models) > 4 else ""))
-            return models
+            discovered = models
     except Exception as exc:
         print(f"  model discovery failed: {exc}", file=sys.stderr)
-    # last resort: recently valid flash names
-    return ["gemini-3.8-flash", "gemini-3-flash-preview",
-            "gemini-2.5-flash", "gemini-2.0-flash"]
+    chain = list(GEMINI_MODELS_ENV) + discovered + list(FALLBACK_MODELS)
+    out, seen = [], set()
+    for m in chain:
+        if m not in seen:
+            seen.add(m)
+            out.append(m)
+    return out
 
 
 def call_gemini(model, prompt, images):
@@ -406,7 +416,13 @@ def main():
     else:
         models = resolve_models()
         working = None
-        quota_dead, waited_429 = False, False
+        quota_dead = False
+        # One 60s wait-and-retry PER MODEL (not one global wait): quotas
+        # are per-model, so a blip on model A must not spend model B's
+        # one wait — and a 429 on B after A's wait still gets its own.
+        # (Nov 2026 FULL review: the single global flag skipped the wait
+        # for every model after the first.)
+        waited_models = set()
         for sale in sales:
             if quota_dead:
                 break
@@ -429,7 +445,6 @@ def main():
                 n=len(images), title=safe_title,
                 watchlist_block=watchlist_block)
             resp, err, tried = None, None, []
-            saw_429, saw_other_error = False, False
             # working model first, then the rest — no skip logic needed
             ordered = ([working] if working else []) + \
                       [m for m in models if m != working]
@@ -447,35 +462,34 @@ def main():
                                   file=sys.stderr)
                             break
                         if e.code == 429:
-                            if not waited_429:
+                            if m not in waited_models:
                                 # Could be per-minute rate limiting rather
                                 # than a dead bucket — wait once and retry
                                 # the same model before moving on.
-                                print("  quota hit (429): waiting 60s, "
-                                      "retrying once", file=sys.stderr)
+                                print(f"  quota hit (429) on {m}: waiting "
+                                      f"60s, retrying once", file=sys.stderr)
                                 time.sleep(60)
-                                waited_429 = True
+                                waited_models.add(m)
                                 continue
                             tried.append(f"{m} (HTTP 429)")
                             print(f"  model {m} quota-exhausted, trying next",
                                   file=sys.stderr)
-                            saw_429 = True
                             break
                         tried.append(f"{m} (HTTP {e.code})")
-                        saw_other_error = True
                         err = f"HTTP {e.code}: {body}"
                         break
                     except Exception as e:
                         tried.append(f"{m} (error)")
-                        saw_other_error = True
                         err = str(e)[:200]
                         break
                 if resp is not None:
                     break
             if resp is None:
-                if saw_429 and not saw_other_error and tried:
-                    # every usable model answered 429: the project's quota
-                    # is dead — stop the run instead of hammering it
+                # Quota-dead only when EVERY tried model answered 429.
+                # (Nov 2026 FULL review): a 404 (dead model name) mixed
+                # with a 429 used to misreport as "project quota exhausted"
+                # and stop the run, when only one model was actually dead.
+                if tried and all("(HTTP 429)" in t for t in tried):
                     quota_dead = True
                     err = ("project quota exhausted (all models 429): " +
                            ", ".join(tried))

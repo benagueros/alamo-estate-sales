@@ -22,6 +22,14 @@ import json
 import os
 import sys
 
+# deal_thresholds lives in comps.py (repo root) so the brief and the draft
+# can never drift; urlutil lives beside this file. Both imports work when
+# run as `python3 pipeline/issue.py` from the repo root.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from comps import deal_thresholds
+from urlutil import safe_url
+
 INTRO = ("Three finds from this week's San Antonio-area estate sales, each "
          "with real eBay sold comps. Most local companies don't publish "
          "per-item prices before the doors open — so instead of a sticker "
@@ -99,7 +107,7 @@ def sold_links_html(comp):
         if d:
             label += f" · {d}"
         parts.append(
-            f'<a href="{html.escape(c["item_link"])}">{label}</a>')
+            f'<a href="{html.escape(safe_url(c["item_link"]))}">{label}</a>')
     return " · ".join(parts)
 
 
@@ -162,8 +170,7 @@ def find_card(find, sale, summary, budget_skipped=False, brief_error=False):
         links = sold_links_html(comp)
         if links:
             comps_line += f'<br><span class="soldlinks">Sold listings: {links}</span>'
-        strong = max(1, round(comp["median"] * 0.85, -1))
-        buy = max(1, round(comp["median"] * 0.70, -1))
+        strong, buy = deal_thresholds(comp["median"])
         threshold = (f"Under ~{money(strong)} is strong. "
                      f"Under ~{money(buy)}, buy it on the spot.")
     else:
@@ -179,9 +186,11 @@ def find_card(find, sale, summary, budget_skipped=False, brief_error=False):
             # (Nov 8 review): surface the per-anchor failure reasons — the
             # modal outcome is 0/3 or 1/3 verified, and the reason (e.g.
             # listing_state='active') is otherwise invisible from the repo.
+            # (Nov 2026 FULL review): reasons only, no eBay item IDs and no
+            # raw API error text — those are internal diagnostics, and the
+            # full detail lives in the committed comp brief.
             notes = "; ".join(
-                f"{f.get('item_id', '?')}: {f.get('note', '?')}"
-                for f in v["failed"])
+                f.get('note', '?') for f in v["failed"])
             comps_line = (f"No verified solds — {len(v['failed'])} anchor comp(s) "
                           f"did not confirm as sold and were removed. "
                           f"<span class=\"writer-note\">(writer: do not publish "
@@ -199,7 +208,15 @@ def find_card(find, sale, summary, budget_skipped=False, brief_error=False):
                           "signal; re-run when credits reset)</span>")
         else:
             comps_line = "No same-item solds in the dataset — query too narrow or no eBay market."
-        flags = comp.get("flags") or []
+        # Defense-in-depth (Nov 2026 FULL review): only withheld-style
+        # flags render on an n=0 card. Dataset flags ("thin: only N...",
+        # "X of N comp(s) were Best-Offer") describe the UNVERIFIED pool;
+        # a stale or hand-edited brief could still carry them, and
+        # rendering them would publish unverified-pool stats on a
+        # withheld card. comps.py now replaces flags on withhold, so this
+        # filter normally passes the withheld message through untouched.
+        flags = [f for f in (comp.get("flags") or [])
+                 if "withheld" in f or "confirmed as sold" in f]
         if flags:
             comps_line += f" <em>({' ; '.join(html.escape(f) for f in flags)})</em>"
         if verification_not_run:
@@ -213,7 +230,7 @@ def find_card(find, sale, summary, budget_skipped=False, brief_error=False):
     auction_line = ""
     if sale.get("auction_url"):
         auction_line = (
-            f'<p class="auction"><a href="{html.escape(sale["auction_url"])}">'
+            f'<p class="auction"><a href="{html.escape(safe_url(sale["auction_url"]))}">'
             f"Browse the auction lots →</a> "
             f'<span class="writer-note">(writer: check opening bids vs comps)</span></p>')
     if sale.get("phone"):
@@ -226,7 +243,7 @@ def find_card(find, sale, summary, budget_skipped=False, brief_error=False):
       <p class="comps"><strong>Sold comps:</strong> {comps_line}</p>
       <p class="threshold"><strong>Deal threshold:</strong> {threshold} <span class="writer-note">(writer: adjust)</span></p>
       <p class="note"><strong>Why it matters:</strong> {"Spotted in the photos" if find.get("source") == "vision" else "Spotted in the listing"} — “{html.escape(find.get('evidence', ''))}” <span class="writer-note">(writer: add era/maker/value-driver note)</span></p>
-      <p class="sale">{sale_line}<br><a href="{html.escape(sale.get('url', ''))}">View sale listing →</a></p>
+      <p class="sale">{sale_line}<br><a href="{html.escape(safe_url(sale.get('url', '')))}">View sale listing →</a></p>
       {auction_line}
     </div>"""
 

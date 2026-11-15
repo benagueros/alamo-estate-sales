@@ -25,6 +25,7 @@ Credit math (free tier = 250/mo, no card; per trawl.dev/agent-setup/SKILL.md):
     them anyway so the guard can only trip early, never overspend the
     free tier.
 """
+import datetime
 import json
 import os
 import re
@@ -37,6 +38,8 @@ import urllib.request
 BASE = "https://api.trawl.dev/ebay/v1"
 THIN_N = 5            # fewer than this = flag dataset as thin
 VERIFY_CAP = 10       # max /item verifications per find (anchors are at most 3)
+RECENCY_DAYS = 90     # sold comps older than this don't set today's threshold
+MAX_PAGES = 5         # cap on /sold pages per find (1 credit per page)
 
 
 class QuotaSpent(Exception):
@@ -85,11 +88,22 @@ def api_get(path, params, api_key):
 
 def same_item(title, query_words, exclude):
     t = (title or "").lower()
-    if any(w not in t for w in query_words):
+    # word-boundary matching for query words too: a query word "box" must
+    # not match "boombox" (substring check did). Same for exclude.
+    if any(not re.search(r"\b" + re.escape(w) + r"\b", t)
+           for w in query_words):
         return False
-    # word-boundary matching: "box" must not nuke "boombox"
     return not any(re.search(r"\b" + re.escape(x.lower()) + r"\b", t)
                    for x in exclude)
+
+
+def deal_thresholds(median):
+    """(strong, buy) deal-threshold starting points from a median sold
+    price. Shared by brief_line() and pipeline/issue.py so the two can
+    never drift (Nov 2026 FULL review)."""
+    strong = max(1, round(median * 0.85, -1))
+    buy = max(1, round(median * 0.70, -1))
+    return strong, buy
 
 
 def fetch_comps(find, api_key):
@@ -101,12 +115,29 @@ def fetch_comps(find, api_key):
     # reject every result anyway, since every query word must be in the
     # title. Drop query words from the exclude list before calling /sold,
     # and use the same filtered list for the local same_item filter.
+    # (Nov 2026 FULL review): compare word-by-word — a multi-word exclude
+    # phrase ("la danse print") containing a query word must also be
+    # dropped; comparing the whole phrase against single query words
+    # missed it.
     exclude = [w for w in find.get("exclude", [])
-               if w.lower() not in words]
-    params = {"query": q, "max_pages": find.get("max_pages", 2)}
+               if not any(part in words for part in w.lower().split())]
+    # (Nov 2026 FULL review): cap pages from the finds input — an
+    # unbounded max_pages is an unbounded credit burn (1 credit/page).
+    try:
+        max_pages = max(1, min(int(find.get("max_pages", 2) or 2), MAX_PAGES))
+    except (TypeError, ValueError):
+        max_pages = 2
+    params = {"query": q, "max_pages": max_pages}
     for k in ("condition", "date_from", "date_to", "marketplace"):
         if k in find:
             params[k] = find[k]
+    if "date_from" not in params:
+        # (Nov 2026 FULL review): no recency bound meant unbounded-in-time
+        # /sold queries — a 2021 sale could set today's deal threshold.
+        # Default to the last ~90 days; an explicit date_from still wins.
+        params["date_from"] = (
+            datetime.date.today()
+            - datetime.timedelta(days=RECENCY_DAYS)).isoformat()
     if exclude:
         params["exclude"] = " ".join(exclude)
     if "category" in find:
@@ -128,24 +159,78 @@ def fetch_comps(find, api_key):
 SOLD_STATES = {"removed"}
 
 
+# Markers of a transient /item 404: trawl reports "details not available
+# yet" when the listing data hasn't propagated. A retry a few seconds
+# later usually succeeds — treating it as "not sold" zeroed whole issues
+# (Nov 2026 FULL review: 0/3 anchors on Nov 14, all transient).
+TRANSIENT_404_MARKERS = ("not available yet", "temporarily unavailable",
+                         "try again")
+
+
+def sanitize_verify_note(msg):
+    """Short human-readable failure reason for the draft/brief — never raw
+    API bodies. A verbatim trawl error JSON in a writer note is internal
+    diagnostics leaking into the draft (Nov 2026 FULL review)."""
+    msg = (msg or "").strip()
+    m = re.search(r"HTTP (\d{3})", msg)
+    if m:
+        code = m.group(1)
+        if code == "404":
+            return "listing details unavailable (HTTP 404)"
+        if code == "429":
+            return "rate limited (HTTP 429)"
+        return f"HTTP {code} from /item"
+    if "quota" in msg.lower() or "credits spent" in msg.lower():
+        return "trawl credits spent"
+    if msg:
+        # Anything else: first line only, no bodies.
+        return msg.split("\n")[0][:80] or "verification request failed"
+    return "verification request failed"
+
+
 def verify_listing(item_id, api_key):
     """Ben's rule: sold-state verification before any comp publishes.
 
     verified=True only on positive evidence of a completed sale:
     listing_state in SOLD_STATES, or an active multi-quantity listing with
     recorded sales. Anything else (unknown state, no sales, API error)
-    verifies False — fail closed, never publish on ambiguity."""
-    try:
-        data, _ = api_get("/item", {"item_id": item_id}, api_key)
-    except Exception as exc:
-        return {"item_id": item_id, "verified": False, "note": str(exc)[:120]}
+    verifies False — fail closed, never publish on ambiguity.
+
+    A transient /item 404 ("details not available yet") is retried once
+    after 10s; a persistent failure still verifies False. The returned
+    dict carries "attempts" so the caller can count every /item call
+    against the credit guard, retries included."""
+    attempts = 0
+    data = None
+    while attempts < 2:
+        attempts += 1
+        try:
+            data, _ = api_get("/item", {"item_id": item_id}, api_key)
+            break
+        except Exception as exc:
+            msg = str(exc)
+            transient = ("HTTP 404" in msg and any(
+                marker in msg.lower()
+                for marker in TRANSIENT_404_MARKERS))
+            if transient and attempts < 2:
+                time.sleep(10)
+                continue
+            return {"item_id": item_id, "verified": False,
+                    "note": sanitize_verify_note(msg), "attempts": attempts}
+    # (Both loop exits are handled inside: success breaks with data set,
+    # any failure returns early. No fall-through path reaches here.)
     details = data.get("details") or {}
     # (Nov 8 review): fall back to top-level fields — /item nests
     # listing_state/sales/sale_price under "details" today, but if a
     # response carries them top-level instead, details-only reads fail
     # closed and silently drop the price-drift signal.
-    state = details.get("listing_state") or data.get("listing_state")
-    sales = details.get("sales") or data.get("sales") or []
+    # (Nov 2026 FULL review): presence checks, not or-chains — an explicit
+    # nested sales=[] must NOT fall through to top-level sales (the old
+    # or-chain let top-level data override an explicit empty list).
+    state = (details["listing_state"] if "listing_state" in details
+             else data.get("listing_state"))
+    sales = (details["sales"] if "sales" in details
+             else data.get("sales") or [])
     multi = len(sales) if state == "active" else 0
     sold = state in SOLD_STATES or multi > 0
     return {
@@ -153,10 +238,12 @@ def verify_listing(item_id, api_key):
         "verified": sold,
         "listing_state": state,
         "note": "" if sold else f"listing_state={state!r}: not a completed sale",
-        "sale_price": details.get("sale_price") or data.get("sale_price"),
+        "sale_price": (details["sale_price"] if "sale_price" in details
+                       else data.get("sale_price")),
         "best_offer": bool(details.get("best_offer_available")
                           or data.get("best_offer_available")),
         "multi_quantity_sales": multi,
+        "attempts": attempts,
     }
 
 
@@ -275,8 +362,7 @@ def brief_line(s):
     fmt = lambda v: f"${v:,.0f}" if isinstance(v, (int, float)) else "?"
     # Suggested starting points for the writer; the published threshold stays
     # an editorial call, never an automated number.
-    strong = max(1, round(s["median"] * 0.85, -1))
-    buy = max(1, round(s["median"] * 0.70, -1))
+    strong, buy = deal_thresholds(s["median"])
     out = (f"### {s['id']} (`{s['query']}`)\n"
            f"Sold comps {fmt(s['min'])} · {fmt(s['max'])} — median ≈ {fmt(s['median'])} "
            f"(n={s['n']}{flag_txt})\n")
@@ -371,7 +457,8 @@ def main():
                     v = verify_listing(c.get("item_id"), api_key)
                 except Exception as exc:  # never crash the daily build
                     v = {"item_id": c.get("item_id"), "verified": False,
-                         "note": f"verify error: {exc}"[:120]}
+                         "note": sanitize_verify_note(str(exc)),
+                         "attempts": 1}
                 # Warn if /item reports a different price than the /sold
                 # anchor: published stats use the anchor price, but a drift
                 # (multi-quantity, relist) means it's stale in one direction.
@@ -385,7 +472,8 @@ def main():
                           f"${item_price:,.0f} — published stats use /sold")
                 # Count every call against the budget, not just successes:
                 # undercounting risks blowing past the real free-tier cap.
-                total_credits += 1
+                # Retries count too (verify_listing reports attempts).
+                total_credits += v.get("attempts", 1)
                 vresults.append({"find": s["id"], **v})
                 verifications.append({"find": s["id"], **v})
             verification = summarize_verification(vresults, anchors)
@@ -399,6 +487,11 @@ def main():
                 # not enough: if the note is missed, unverified stats publish.
                 # (Any failed anchor, even with 1+ confirmed, also withholds
                 # per the strict Nov 2026 rule below — no partial credit.)
+                # Flags are replaced, not kept: the old flags ("thin: only
+                # N...", "X of N comp(s) were Best-Offer") describe the
+                # UNVERIFIED dataset, and issue.py renders flags on n=0
+                # cards — keeping them would publish unverified-pool stats
+                # on a withheld card (Nov 2026 FULL review).
                 s = {"id": find["id"], "query": find["query"], "n": 0,
                      "comps": [], "verification": verification,
                      "flags": [f"0/{len(anchors)} anchors confirmed as sold — "
@@ -421,12 +514,14 @@ def main():
             if failed_ids:
                 # Mirror the 0-anchors path: n=0, no comps, no stats keys.
                 # Keep verification so issue.py renders the failed-anchor
-                # message. Drop the old "remaining stats unverified" flag
-                # (no stats publish, so no flag needed).
+                # message. Drop the old dataset flags ("thin: only N...",
+                # "X of N comp(s) were Best-Offer") — they describe the
+                # unverified dataset and issue.py renders flags on n=0
+                # cards (Nov 2026 FULL review). One withheld flag instead.
                 s = {"id": s["id"], "query": s["query"], "n": 0,
                      "comps": [], "verification": verification,
-                     "flags": [f for f in (s.get("flags") or [])
-                               if "remaining stats unverified" not in f]}
+                     "flags": [f"{len(failed_ids)} of {len(anchors)} "
+                               f"anchor(s) did not confirm — stats withheld"]}
                 summaries[-1] = s
                 print(f"  {len(failed_ids)} anchor(s) failed — stats withheld (strict)")
 

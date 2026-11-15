@@ -21,6 +21,18 @@ import json
 import re
 import sys
 
+# Words that disqualify a comp title: parts/manuals/brochures/prints and
+# accessories, not the item itself. Single source of truth — vision.py
+# imports this list (Nov 2026 FULL review: the two copies had drifted
+# apart in the past).
+# NOTE: "model" was removed (Nov 2026 FULL review): it dropped legitimate
+# comps like "model train" / "scale model" where "model" is part of the
+# product name, not an accessory/manual signal.
+EXCLUDE = ["parts", "manual", "brochure", "print",
+           "poster", "book",
+           # accessories, not the item itself
+           "band", "strap", "box", "clasp"]
+
 # (signal phrase, trawl query, weight). Queries stay short: trawl.dev matches
 # every word conjunctively, so brand + model + noun. Extend freely — one line
 # per addition.
@@ -106,10 +118,7 @@ def extract(sales, max_finds=4):
                 "sale_title": sale.get("title"),
                 "weight": weight,
                 "evidence": find_evidence(desc, phrase),
-                "exclude": ["parts", "manual", "brochure", "print",
-                            "poster", "book",
-                            # accessories, not the item itself
-                            "band", "strap", "box", "clasp"],
+                "exclude": list(EXCLUDE),
                 "source": "keyword",
             })
     candidates.sort(key=lambda c: -c["weight"])

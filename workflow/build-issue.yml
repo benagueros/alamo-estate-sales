@@ -43,6 +43,16 @@ jobs:
           pip install playwright
           playwright install --with-deps chromium
 
+      - name: Run tests
+        # Stdlib-only test scripts (no pytest on the runner): every
+        # tests/test_*.py exits non-zero on failure. (Nov 2026 FULL
+        # review: the suite existed and passed but no workflow ran it.)
+        run: |
+          for t in tests/test_*.py; do
+            echo "--- $t"
+            python3 "$t" || exit 1
+          done
+
       - name: Scrape SA listings
         # Metro page discovery (SaleEvent JSON-LD) + Playwright detail pages.
         # Detail pages are capped at 25 in scrape.py; total runtime ~10 min.
@@ -205,10 +215,17 @@ jobs:
         if: always()
         run: |
           python3 - <<'EOF'
-          import json, os
+          import calendar, datetime, json, os
+          month = datetime.date.today().strftime("%Y-%m")
           try:
               brief = json.load(open("out/comp-brief.json"))
           except Exception as exc:
+              # (Nov 9 review): a missing/unreadable brief used to exit 0
+              # silently — write an explicit UNKNOWN line so the gap is
+              # visible in the run summary instead of a blank section.
+              msg = ("## Verification (sold-state check)\n\n"
+                     f"UNKNOWN — no readable comp-brief ({exc}).\n")
+              open(os.environ["GITHUB_STEP_SUMMARY"], "a").write(msg)
               print(f"no readable comp-brief: {exc}")
               raise SystemExit(0)
           lines = ["## Verification (sold-state check)", ""]
@@ -221,6 +238,28 @@ jobs:
               lines.append(f"- **{s['id']}** (`{s['query']}`): {status} — {npass}/{checked} anchors confirmed")
               for f in v.get("failed", []):
                   lines.append(f"  - {f.get('item_id', '?')}: {f.get('note', '?')}")
+          # Trawl budget pace (Nov 2026 FULL review): month-to-date spend
+          # from state.json, projected to month-end at the current daily
+          # rate, so a guard trip is visible days ahead — not after the
+          # remaining November builds start skipping comps.
+          try:
+              state = json.load(open("state.json"))
+              used = (state.get("trawl_credits_used", 0)
+                      if state.get("trawl_month") == month else 0)
+          except (FileNotFoundError, json.JSONDecodeError):
+              used = None
+          if used is None:
+              lines += ["", "Trawl budget: UNKNOWN — no readable state.json."]
+          else:
+              today = datetime.date.today()
+              days_in_month = calendar.monthrange(today.year, today.month)[1]
+              projected = (round(used / today.day * days_in_month)
+                           if today.day else used)
+              flag = (" — OVER GUARD, will trip before month-end"
+                      if projected > 200 else "")
+              lines += ["",
+                        f"Trawl budget: {used}/200 guard used; "
+                        f"projected month-end ≈ {projected}{flag}."]
           open(os.environ["GITHUB_STEP_SUMMARY"], "a").write("\n".join(lines) + "\n")
           print("\n".join(lines))
           EOF

@@ -35,6 +35,8 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 
+from urlutil import safe_url
+
 METRO_URL = "https://www.estatesales.net/TX/San-Antonio"
 
 # San Antonio metro: 782xx (city), 780xx (Boerne/Helotes/Fair Oaks),
@@ -75,7 +77,7 @@ def discover(metro_url):
         for it in items:
             if not isinstance(it, dict) or it.get("@type") != "SaleEvent":
                 continue
-            url = it.get("url", "") or ""
+            url = safe_url(it.get("url", "") or "")
             if not url or url in seen:
                 continue
             seen.add(url)
@@ -233,26 +235,27 @@ def main():
             time.sleep(2)
         browser.close()
 
-    # Re-validate zip-less sales against the detail-pass address (Nov 5
-    # review): a sale that passed in_metro() with no ZIP may still be
-    # out-of-area. The detail page's address usually carries a ZIP — if
-    # it does and it's non-metro, drop the sale. If the address has no
-    # ZIP either, keep it (Ben reviews the draft). Fill in the ZIP when
-    # found so downstream steps see the real one.
+    # Re-validate ZIPs against the detail-pass address (Nov 5 review, Nov
+    # 2026 FULL review): a sale that passed in_metro() may still be
+    # out-of-area, and the JSON-LD ZIP itself can be wrong — so EVERY
+    # sale is re-checked here, not just zip-less ones. The detail page's
+    # address usually carries a ZIP; if it does and it's non-metro, drop
+    # the sale. If the address has no ZIP either, keep the JSON-LD one
+    # (Ben reviews the draft). Fill in / correct the ZIP when found.
+    # TX-anchored match first (the ZIP follows the state in a street
+    # address); fall back to the last 5-digit token — a street or suite
+    # number ("12345 Main St") is a 5-digit token too, and the ZIP is the
+    # trailing one (Nov 6 review).
     for s in sales:
-        if not s.get("zip"):
-            # Last 5-digit token, not the first (Nov 6 review): a street or
-            # suite number ("12345 Main St, San Antonio, TX 78240") is a
-            # 5-digit token too, and the ZIP is the trailing one. Taking
-            # the first token could wrongly drop a metro sale or wrongly
-            # accept an out-of-area one.
-            zips = re.findall(r"\b(\d{5})\b", s.get("address", ""))
-            if zips:
-                s["zip"] = zips[-1]
-                if not zips[-1].startswith(METRO_ZIP_PREFIXES):
-                    print(f"  out-of-area (detail address): {s['url']}",
-                          file=sys.stderr)
-                    s["_drop"] = True
+        addr = s.get("address", "")
+        m = re.search(r"\bTX\s+(\d{5})\b", addr)
+        zips = [m.group(1)] if m else re.findall(r"\b(\d{5})\b", addr)
+        if zips:
+            s["zip"] = zips[-1]
+            if not zips[-1].startswith(METRO_ZIP_PREFIXES):
+                print(f"  out-of-area (detail address): {s['url']}",
+                      file=sys.stderr)
+                s["_drop"] = True
     sales = [s for s in sales if not s.pop("_drop", False)]
 
     sales = [s for s in sales if len(s.get("description", "")) > 40]
@@ -266,7 +269,6 @@ def main():
               "check DETAIL_JS selectors for a site redesign",
               file=sys.stderr)
         return 1
-    return 0
     return 0
 
 

@@ -146,20 +146,25 @@ def main():
               f"retrying next hour.")
         return 1
 
-    # Confirm the send landed before marking it sent, so a flaky response
-    # can't cause a double-send on the next run.
+    # POST accepted the send — record it NOW, before the confirm GET.
+    # (Nov 2026 FULL review): Buttondown can lag and still report "draft"
+    # after a successful send; the old code returned 1 in that case, so
+    # the next hourly run re-POSTed and double-sent. A 2xx POST means the
+    # send was accepted, so the manifest is the record — the confirm GET
+    # below is informational only.
+    manifest["sent"] = True
+    manifest["sent_at"] = now.isoformat()
+    json.dump(manifest, open(manifest_path, "w"), indent=2)
     status, email = bd_request("GET", f"/emails/{email_id}", api_key)
     if status == 200 and email.get("status") == "sent":
-        manifest["sent"] = True
-        json.dump(manifest, open(manifest_path, "w"), indent=2)
         print(f"Sent draft {email_id} ({manifest.get('subject')}).")
-        # Exit 2 = actually sent (distinct from 0 = skipped, 1 = retry).
-        # The workflow loop uses this to stop after one send per hour.
-        return 2
-    print(f"Send issued for {email_id} but status is "
-          f"{email.get('status') if email else 'unknown'} — "
-          f"will re-check next hour.")
-    return 1
+    else:
+        print(f"Send accepted for {email_id}; confirm GET shows "
+              f"{email.get('status') if email else 'unknown'} "
+              f"(propagation lag) — marked sent from POST acceptance.")
+    # Exit 2 = actually sent (distinct from 0 = skipped, 1 = retry).
+    # The workflow loop uses this to stop after one send per hour.
+    return 2
 
 
 if __name__ == "__main__":
